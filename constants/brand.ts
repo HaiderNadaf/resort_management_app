@@ -1,0 +1,15 @@
+export const BrandColors = {
+  primary: '#1D391D',
+  primaryDark: '#162C16',
+  primarySoft: '#E7ECE1',
+  mustard: '#CDAB2C',
+  mustardSoft: '#F5EBC4',
+  success: '#CDAB2C',
+  successSoft: '#F3EFC1',
+  danger: '#701011',
+  appBg: '#F2F5EE',
+  cardBg: '#FFFFFF',
+  text: '#111827',
+  muted: '#6D7B9A',
+  border: '#D8DFD1',
+} as const;
