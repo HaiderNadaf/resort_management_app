@@ -6,7 +6,9 @@ import { BrandColors } from '@/constants/brand';
 import { useAuth } from '@/context/auth-context';
 
 export default function TabLayout() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
+  const normalizedDepartment = (user?.department || '').trim().toLowerCase();
+  const canViewInspectionsTab = normalizedDepartment === 'house keeping';
   if (!isLoading && !isAuthenticated) {
     return <Redirect href="/(auth)/sign-in" />;
   }
@@ -43,6 +45,16 @@ export default function TabLayout() {
           title: 'Home',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons name={focused ? 'home' : 'home-outline'} size={22} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="room-inspections"
+        options={{
+          title: 'Inspections',
+          href: canViewInspectionsTab ? undefined : null,
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons name={focused ? 'clipboard' : 'clipboard-outline'} size={22} color={color} />
           ),
         }}
       />

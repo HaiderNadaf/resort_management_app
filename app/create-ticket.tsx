@@ -12,6 +12,7 @@ type Employee = {
   _id: string;
   name: string;
   phone: string;
+  role: 'admin' | 'employee';
   department?: string | null;
 };
 
@@ -35,28 +36,43 @@ export default function CreateTicketScreen() {
   const [showCamera, setShowCamera] = useState(false);
 
   useEffect(() => {
-    const loadEmployees = async () => {
-      if (!token || user?.role !== 'admin') return;
+    if (!department && user?.department) {
+      setDepartment(user.department);
+    }
+  }, [department, user?.department]);
+
+  useEffect(() => {
+    const loadAssignableUsers = async () => {
+      if (!token || !department) {
+        setEmployees([]);
+        return;
+      }
 
       try {
         setIsLoadingEmployees(true);
-        const response = await apiRequest<{ employees: Employee[] }>('/api/auth/employees', { token });
-        setEmployees(response.employees);
+        setError('');
+        const response = await apiRequest<{ users: Employee[] }>(
+          `/api/tickets/assignable-users?department=${encodeURIComponent(department)}`,
+          { token }
+        );
+        setEmployees(response.users.filter((item) => item._id !== user?.id));
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to fetch employees');
+        setEmployees([]);
+        setError(e instanceof Error ? e.message : 'Failed to fetch assignable users');
       } finally {
         setIsLoadingEmployees(false);
       }
     };
 
-    loadEmployees();
-  }, [token, user?.role]);
+    loadAssignableUsers();
+  }, [token, department, user?.id]);
 
   const normalizeDepartment = (value: string | null | undefined) => (value ?? '').trim().toLowerCase();
-  const departments = user?.isMainAdmin ? EMPLOYEE_DEPARTMENTS : user?.department ? [user.department] : EMPLOYEE_DEPARTMENTS;
-  const filteredEmployees = employees.filter(
-    (item) => normalizeDepartment(item.department) === normalizeDepartment(department)
-  );
+  const departments =
+    user?.role === 'admin' && !user?.isMainAdmin && user?.department
+      ? [user.department]
+      : [...EMPLOYEE_DEPARTMENTS];
+  const filteredEmployees = employees.filter((item) => normalizeDepartment(item.department) === normalizeDepartment(department));
 
   const pickImage = async () => {
     try {
@@ -119,6 +135,7 @@ export default function CreateTicketScreen() {
         description: description.trim(),
         priority,
         imageUri,
+        department,
         assignedTo,
       });
       router.back();
@@ -128,14 +145,6 @@ export default function CreateTicketScreen() {
       setIsSubmitting(false);
     }
   };
-
-  if (user?.role !== 'admin') {
-    return (
-      <View style={styles.pageCenter}>
-        <Text style={styles.blockTitle}>Only admin can create tickets.</Text>
-      </View>
-    );
-  }
 
   if (showCamera) {
     if (!cameraPermission?.granted) {
@@ -170,7 +179,7 @@ export default function CreateTicketScreen() {
   return (
     <View style={styles.page}>
       <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.kicker}>ADMIN ACTION</Text>
+        <Text style={styles.kicker}>{user?.role === 'admin' ? 'ADMIN ACTION' : 'EMPLOYEE ACTION'}</Text>
         <Text style={styles.title}>Create Ticket</Text>
 
         <Text style={styles.label}>Title</Text>
@@ -220,7 +229,7 @@ export default function CreateTicketScreen() {
         <Text style={styles.label}>Assign To</Text>
         {!department ? <Text style={styles.helper}>Select department first.</Text> : null}
         {department && filteredEmployees.length === 0 ? (
-          <Text style={styles.helper}>No employees found in selected department.</Text>
+          <Text style={styles.helper}>No assignable users found in selected department.</Text>
         ) : null}
         <View style={styles.segmentWrap}>
           {filteredEmployees.map((item) => (
@@ -229,7 +238,7 @@ export default function CreateTicketScreen() {
               style={[styles.choiceChip, assignedTo === item._id ? styles.choiceChipActive : null]}
               onPress={() => setAssignedTo(item._id)}>
               <Text style={[styles.choiceChipText, assignedTo === item._id ? styles.choiceChipTextActive : null]}>
-                {item.name}
+                {item.name} ({item.role === 'admin' ? 'Admin' : 'Employee'})
               </Text>
             </TouchableOpacity>
           ))}

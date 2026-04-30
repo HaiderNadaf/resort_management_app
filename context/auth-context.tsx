@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
 import { apiRequest } from '@/lib/api';
@@ -82,6 +83,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     hydrate();
   }, []);
+
+  useEffect(() => {
+    const syncPushToken = async () => {
+      if (!token || !user?.id) return;
+      const isExpoGo = Constants.appOwnership === 'expo';
+      if (isExpoGo) return;
+      try {
+        const Notifications = await import('expo-notifications');
+        const settings = await Notifications.getPermissionsAsync();
+        const finalStatus =
+          settings.status === 'granted'
+            ? 'granted'
+            : (await Notifications.requestPermissionsAsync()).status;
+        if (finalStatus !== 'granted') return;
+
+        const expoPushToken = (await Notifications.getExpoPushTokenAsync()).data;
+        if (!expoPushToken) return;
+
+        await apiRequest('/api/auth/push-token', {
+          method: 'PATCH',
+          token,
+          body: { pushToken: expoPushToken },
+        });
+      } catch {
+        // Push token registration should not block auth flow.
+      }
+    };
+
+    syncPushToken();
+  }, [token, user?.id]);
 
   const persistAuth = async (authToken: string, authUser: AuthUser) => {
     setToken(authToken);

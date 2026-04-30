@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
-import { Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { useAuth } from '@/context/auth-context';
 
@@ -51,11 +51,15 @@ export default function SignInScreen() {
 
   return (
     <View style={styles.page}>
-      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+      <KeyboardAvoidingView style={styles.keyboardWrap} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <ScrollView
+        contentContainerStyle={styles.container}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}>
         <View style={styles.logoWrap}>
-          <View style={styles.logoBadge}>
-            <Image source={require('@/assets/images/logo.png')} style={styles.logo} />
-          </View>
+          <Image source={require('@/assets/images/logo.png')} style={styles.logo} />
+          <Text style={styles.logoText}>Since 1994</Text>
         </View>
         <Text style={styles.title}>Welcome back</Text>
         <Text style={styles.subtitle}>Sign in to continue managing tickets.</Text>
@@ -120,30 +124,17 @@ export default function SignInScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
+      </KeyboardAvoidingView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: '#F2F5EE' },
+  keyboardWrap: { flex: 1 },
   container: { paddingHorizontal: 18, paddingTop: 52, paddingBottom: 36 },
-  logoWrap: { alignItems: 'center', marginBottom: 14 },
-  logoBadge: {
-    width: 76,
-    height: 76,
-    borderRadius: 20,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D8DFD1',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#111827',
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
-  },
-  logo: { width: 52, height: 52, borderRadius: 12 },
+  logoWrap: { alignItems: 'center', marginBottom: 0 },
+  logo: { width: 72, height: 72, borderRadius: 14 },
   title: { textAlign: 'center', fontSize: 44, fontWeight: '800', color: '#111827' },
   subtitle: { marginTop: 8, textAlign: 'center', fontSize: 16, lineHeight: 24, color: '#5F6C84', marginBottom: 16 },
   formCard: {
@@ -170,6 +161,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
     paddingHorizontal: 14,
     color: '#111827',
+  },
+  logoText:{
+    fontSize: 12,
+    color: '#C9A227',
+    marginTop: 0,
+    marginLeft:7,
   },
   passwordWrap: {
     minHeight: 52,
@@ -209,7 +206,7 @@ const styles = StyleSheet.create({
   error: { marginTop: 12, color: '#DC2626', fontSize: 13, fontWeight: '500' },
   submitButton: {
     marginTop: 16,
-    backgroundColor: '#2563EB',
+    backgroundColor: '#701011',
     borderRadius: 18,
     minHeight: 52,
     alignItems: 'center',
@@ -217,5 +214,5 @@ const styles = StyleSheet.create({
   },
   submitButtonText: { color: '#FFFFFF', fontSize: 20, fontWeight: '700' },
   footerText: { marginTop: 14, textAlign: 'center', color: '#6D7B9A', fontSize: 14 },
-  footerLink: { color: '#2563EB', fontWeight: '700' },
+  footerLink: { color: '#701011', fontWeight: '700' },
 });

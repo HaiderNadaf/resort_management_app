@@ -2,13 +2,14 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import { useAuth } from '@/context/auth-context';
+import { EMPLOYEE_DEPARTMENTS, useAuth } from '@/context/auth-context';
 import { useTickets } from '@/context/ticket-context';
 import { apiRequest } from '@/lib/api';
 
 type Employee = {
   _id: string;
   name: string;
+  role: 'admin' | 'employee';
   department?: string | null;
 };
 
@@ -19,23 +20,37 @@ export default function ReassignTicketScreen() {
   const { reassignTicket } = useTickets();
 
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [department, setDepartment] = useState(user?.department ?? '');
   const [assignedTo, setAssignedTo] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isDepartmentAdmin = user?.role === 'admin' && !user?.isMainAdmin;
+
+  useEffect(() => {
+    if (!department && user?.department) {
+      setDepartment(user.department);
+    }
+  }, [department, user?.department]);
 
   useEffect(() => {
     const load = async () => {
-      if (!token) return;
+      if (!token || !department) {
+        setEmployees([]);
+        return;
+      }
       try {
         setError('');
-        const response = await apiRequest<{ employees: Employee[] }>('/api/auth/department-employees', { token });
-        setEmployees(response.employees.filter((item) => item._id !== user?.id));
+        const response = await apiRequest<{ users: Employee[] }>(
+          `/api/tickets/assignable-users?department=${encodeURIComponent(department)}`,
+          { token }
+        );
+        setEmployees(response.users.filter((item) => item._id !== user?.id));
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load employees');
       }
     };
     load();
-  }, [token, user?.id]);
+  }, [token, user?.id, department]);
 
   const submit = async () => {
     if (!id || !assignedTo) {
@@ -44,7 +59,7 @@ export default function ReassignTicketScreen() {
     }
     setIsSubmitting(true);
     try {
-      await reassignTicket(String(id), assignedTo);
+      await reassignTicket(String(id), assignedTo, department);
       router.back();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to reassign');
@@ -57,7 +72,23 @@ export default function ReassignTicketScreen() {
     <View style={styles.page}>
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.title}>Reassign Ticket</Text>
-        <Text style={styles.sub}>Department: {user?.department ?? '-'}</Text>
+        <Text style={styles.sub}>{isDepartmentAdmin ? `Department: ${department || '-'}` : 'Select department and assign user'}</Text>
+
+        {!isDepartmentAdmin ? (
+          <View style={styles.wrap}>
+            {EMPLOYEE_DEPARTMENTS.map((item) => (
+              <TouchableOpacity
+                key={item}
+                style={[styles.chip, department === item ? styles.chipActive : null]}
+                onPress={() => {
+                  setDepartment(item);
+                  setAssignedTo('');
+                }}>
+                <Text style={[styles.chipText, department === item ? styles.chipTextActive : null]}>{item}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : null}
 
         <View style={styles.wrap}>
           {employees.map((item) => (
@@ -66,13 +97,17 @@ export default function ReassignTicketScreen() {
               style={[styles.chip, assignedTo === item._id ? styles.chipActive : null]}
               onPress={() => setAssignedTo(item._id)}>
               <Text style={[styles.chipText, assignedTo === item._id ? styles.chipTextActive : null]}>
-                {item.name}
+                {item.name} ({item.role === 'admin' ? 'Admin' : 'Employee'})
               </Text>
             </TouchableOpacity>
           ))}
         </View>
         {employees.length === 0 ? (
-          <Text style={styles.info}>No other employee found in your department for reassignment.</Text>
+          <Text style={styles.info}>
+            {isDepartmentAdmin
+              ? 'No employees found in your department.'
+              : 'No assignable users found for selected department.'}
+          </Text>
         ) : null}
 
         {error ? <Text style={styles.error}>{error}</Text> : null}

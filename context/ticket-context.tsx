@@ -25,6 +25,12 @@ export type Ticket = {
     name: string;
     role: string;
   } | null;
+  assignmentHistory?: Array<{
+    assignedBy?: { _id: string; name: string; role: string; department?: string | null } | null;
+    assignedTo?: { _id: string; name: string; role: string; department?: string | null } | null;
+    department?: string | null;
+    assignedAt?: string;
+  }>;
   createdAt: string;
   updatedAt: string;
 };
@@ -37,7 +43,7 @@ type TicketContextValue = {
   createTicket: (payload: CreateTicketPayload) => Promise<void>;
   startTicket: (ticketId: string) => Promise<void>;
   completeTicket: (ticketId: string, imageUri: string) => Promise<void>;
-  reassignTicket: (ticketId: string, assignedTo: string) => Promise<void>;
+  reassignTicket: (ticketId: string, assignedTo: string, department?: string) => Promise<void>;
   markAssignedNotificationsRead: () => Promise<void>;
 };
 
@@ -46,6 +52,7 @@ type CreateTicketPayload = {
   description: string;
   imageUri: string;
   priority: TicketPriority;
+  department: string;
   assignedTo: string;
 };
 
@@ -101,6 +108,7 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
     formData.append('title', payload.title);
     formData.append('description', payload.description);
     formData.append('priority', payload.priority);
+    formData.append('department', payload.department);
     formData.append('assignedTo', payload.assignedTo);
     formData.append('image', {
       uri: payload.imageUri,
@@ -149,13 +157,13 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
     await refreshTickets();
   };
 
-  const reassignTicket = async (ticketId: string, assignedTo: string) => {
+  const reassignTicket = async (ticketId: string, assignedTo: string, department?: string) => {
     if (!token) {
       throw new Error('Not authenticated');
     }
     await apiRequest<Ticket>(`/api/tickets/${ticketId}/reassign`, {
       method: 'PATCH',
-      body: { assignedTo },
+      body: { assignedTo, department },
       token,
     });
     await refreshTickets();

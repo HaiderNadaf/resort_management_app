@@ -1,23 +1,140 @@
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import * as Location from 'expo-location';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Image, PanResponder, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { BrandColors } from '@/constants/brand';
 import { useAuth } from '@/context/auth-context';
 import { useTickets } from '@/context/ticket-context';
+import { apiRequest } from '@/lib/api';
 
 export default function HomeScreen() {
+  const SWIPE_TRACK_WIDTH = 188;
+  const SWIPE_THUMB_WIDTH = 40;
+  const SWIPE_MAX_X = (SWIPE_TRACK_WIDTH - 6) / 2;
+  const SWIPE_CENTER_X = SWIPE_MAX_X / 2;
+  const SWIPE_TRIGGER_GAP = 20;
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const { tickets, isLoading, assignedNotificationCount, markAssignedNotificationsRead, startTicket } = useTickets();
+  const [attendance, setAttendance] = useState<{
+    checkedIn: boolean;
+    checkedOut: boolean;
+    checkIn?: { capturedAt?: string } | null;
+    checkOut?: { capturedAt?: string } | null;
+  } | null>(null);
+  const [attendanceError, setAttendanceError] = useState('');
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
   const openTickets = tickets.filter((ticket) => ticket.status !== 'completed');
   const pendingCount = tickets.filter((ticket) => ticket.status === 'pending').length;
   const activeCount = tickets.filter((ticket) => ticket.status === 'in_progress').length;
   const recentTickets = openTickets.slice(0, 10);
+  const attendanceStatusLabel = useMemo(() => {
+    const inAt = attendance?.checkIn?.capturedAt ? new Date(attendance.checkIn.capturedAt).getTime() : 0;
+    const outAt = attendance?.checkOut?.capturedAt ? new Date(attendance.checkOut.capturedAt).getTime() : 0;
+    if (!inAt && !outAt) return 'Not Marked';
+    return outAt > inAt ? 'Checked Out' : 'Checked In';
+  }, [attendance]);
+  const swipeX = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    swipeX.setValue(SWIPE_CENTER_X);
+  }, [swipeX, SWIPE_CENTER_X]);
+
+  const animateThumbTo = (value: number) => {
+    Animated.spring(swipeX, {
+      toValue: value,
+      useNativeDriver: false,
+      friction: 7,
+      tension: 90,
+    }).start();
+  };
+
+  const attendancePanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderMove: (_, gestureState) => {
+          if (attendanceLoading) return;
+          const next = Math.max(0, Math.min(SWIPE_MAX_X, SWIPE_CENTER_X + gestureState.dx));
+          swipeX.setValue(next);
+        },
+        onPanResponderRelease: () => {
+          if (attendanceLoading) return;
+          swipeX.stopAnimation((currentX) => {
+            if (currentX >= SWIPE_CENTER_X + SWIPE_TRIGGER_GAP) {
+              animateThumbTo(SWIPE_MAX_X);
+              captureAndSubmitAttendance('check-in');
+            } else if (currentX <= SWIPE_CENTER_X - SWIPE_TRIGGER_GAP) {
+              animateThumbTo(0);
+              captureAndSubmitAttendance('check-out');
+            } else {
+              animateThumbTo(SWIPE_CENTER_X);
+            }
+          });
+        },
+      }),
+    [attendanceLoading, swipeX, SWIPE_CENTER_X, SWIPE_MAX_X, SWIPE_TRIGGER_GAP]
+  );
+
+  useEffect(() => {
+    if (!token) return;
+    apiRequest<{ checkedIn: boolean; checkedOut: boolean; checkIn?: { capturedAt?: string } | null; checkOut?: { capturedAt?: string } | null }>(
+      '/api/attendance/today',
+      { token }
+    )
+      .then(setAttendance)
+      .catch((e) => setAttendanceError(e instanceof Error ? e.message : 'Failed to load attendance status'));
+  }, [token]);
+
+  const captureAndSubmitAttendance = async (type: 'check-in' | 'check-out') => {
+    if (!token) return;
+    setAttendanceError('');
+    setAttendanceLoading(true);
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== 'granted') {
+        throw new Error('Location permission is required.');
+      }
+
+      const current = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      await apiRequest(`/api/attendance/${type}`, {
+        method: 'POST',
+        token,
+        body: {
+          latitude: current.coords.latitude,
+          longitude: current.coords.longitude,
+        },
+      });
+
+      const refreshed = await apiRequest<{
+        checkedIn: boolean;
+        checkedOut: boolean;
+        checkIn?: { capturedAt?: string } | null;
+        checkOut?: { capturedAt?: string } | null;
+      }>('/api/attendance/today', { token });
+      setAttendance(refreshed);
+    } catch (e) {
+      setAttendanceError(e instanceof Error ? e.message : 'Failed to update attendance');
+    } finally {
+      setAttendanceLoading(false);
+      animateThumbTo(SWIPE_CENTER_X);
+    }
+  };
 
   return (
     <View style={styles.page}>
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+      <View style={styles.goldCoinRow}>
+                <Text style={styles.goldText}>Gold</Text>
+                <Text style={styles.coinText}> coins & clubs</Text>
+                <Image source={require('@/assets/images/logo.png')} style={styles.titleLogo} />
+              </View>
         <View style={styles.profileBar}>
           <View style={styles.profileLeft}>
             {user?.profileImageUrl ? (
@@ -30,15 +147,72 @@ export default function HomeScreen() {
             <View>
               <Text style={styles.profileName}>{user?.name ?? 'User'}</Text>
               <Text style={styles.profileRole}>{user?.role === 'admin' ? 'Admin' : 'Employee'}</Text>
+              <View style={styles.profileAttendanceWrap}>
+                <View
+                  style={[
+                    styles.profileAttendanceDot,
+                    attendance?.checkedOut
+                      ? styles.profileAttendanceDotDone
+                      : attendance?.checkedIn
+                      ? styles.profileAttendanceDotIn
+                      : styles.profileAttendanceDotPending,
+                  ]}
+                />
+                <Text style={styles.profileAttendanceText}>{attendanceStatusLabel}</Text>
+              </View>
             </View>
+           
           </View>
           <View style={styles.profileIconWrap}>
             <Ionicons name="notifications-outline" size={18} color="#1D391D" />
           </View>
         </View>
 
-        <Text style={styles.kicker}>ADMIN DASHBOARD</Text>
-        <Text style={styles.title}>All Tickets</Text>
+        <Text style={styles.kicker}>{user?.role === 'admin' ? 'ADMIN DASHBOARD' : 'EMPLOYEE DASHBOARD'}</Text>
+        <View style={styles.titleRow}>
+          <Text style={styles.title}>All Tickets</Text>
+          {user ? (
+            <View style={styles.attendanceInlineWrap}>
+              <View style={styles.swipeTrack}>
+                <Animated.View
+                  {...attendancePanResponder.panHandlers}
+                  style={[
+                    styles.swipeThumb,
+                    {
+                      transform: [{ translateX: swipeX }],
+                      backgroundColor: '#334155',
+                    },
+                  ]}>
+                  <Ionicons name="swap-horizontal-outline" size={16} color="#FFFFFF" />
+                </Animated.View>
+                <View pointerEvents="none" style={styles.swipeSegmentRow}>
+                  <View style={styles.swipeSegment}>
+                    <Text style={styles.swipeSegmentText}>Check In</Text>
+                  </View>
+                  <View style={styles.swipeSegment}>
+                    <Text style={styles.swipeSegmentText}>Check Out</Text>
+                  </View>
+                </View>
+              </View>
+              <View style={styles.attendanceStatusRow}>
+                <View
+                  style={[
+                    styles.attendanceStatusDot,
+                    attendance?.checkedOut
+                      ? styles.attendanceStatusDotDone
+                      : attendance?.checkedIn
+                      ? styles.attendanceStatusDotIn
+                      : styles.attendanceStatusDotPending,
+                  ]}
+                />
+                <Text style={styles.attendanceInlineStatus}>
+                  {attendanceLoading ? 'Updating...' : `${attendanceStatusLabel} (swipe both ways)`}
+                </Text>
+              </View>
+            </View>
+          ) : null}
+        </View>
+        {attendanceError ? <Text style={styles.attendanceError}>{attendanceError}</Text> : null}
 
         <View style={styles.statsRow}>
           <View style={styles.statCard}>
@@ -78,13 +252,12 @@ export default function HomeScreen() {
           </TouchableOpacity>
         ) : null}
 
-        {user?.role === 'admin' ? (
+        {user ? (
           <TouchableOpacity style={styles.createBtn} onPress={() => router.push('/create-ticket')}>
             <Ionicons name="add" size={16} color="#FFFFFF" />
             <Text style={styles.createBtnText}>Create Ticket</Text>
           </TouchableOpacity>
         ) : null}
-
         {isLoading ? <Text style={styles.emptyText}>Loading tickets...</Text> : null}
         {!isLoading && recentTickets.length === 0 ? <Text style={styles.emptyText}>No tickets found.</Text> : null}
 
@@ -144,15 +317,21 @@ export default function HomeScreen() {
                   </TouchableOpacity>
                 </View>
               ) : user?.role === 'admin' && ticket.status !== 'completed' ? (
-                <View style={styles.assignedStatusChip}>
-                  <Ionicons
-                    name={ticket.status === 'in_progress' ? 'play-outline' : 'time-outline'}
-                    size={12}
-                    color={ticket.status === 'in_progress' ? '#2563EB' : '#CDAB2C'}
-                  />
-                  <Text style={[styles.assignedStatusText, ticket.status === 'in_progress' ? styles.inProgressText : null]}>
-                    {ticket.status === 'in_progress' ? 'In Progress' : 'Pending (Assigned)'}
-                  </Text>
+                <View style={styles.employeeActions}>
+                  <TouchableOpacity style={styles.reassignBtn} onPress={() => router.push(`/reassign-ticket/${ticket._id}`)}>
+                    <Ionicons name="git-branch-outline" size={12} color="#1D391D" />
+                    <Text style={styles.reassignText}>Reassign</Text>
+                  </TouchableOpacity>
+                  <View style={styles.assignedStatusChip}>
+                    <Ionicons
+                      name={ticket.status === 'in_progress' ? 'play-outline' : 'time-outline'}
+                      size={12}
+                      color={ticket.status === 'in_progress' ? '#2563EB' : '#CDAB2C'}
+                    />
+                    <Text style={[styles.assignedStatusText, ticket.status === 'in_progress' ? styles.inProgressText : null]}>
+                      {ticket.status === 'in_progress' ? 'In Progress' : 'Pending'}
+                    </Text>
+                  </View>
                 </View>
               ) : (
                 <View style={styles.reassignBtn}>
@@ -231,6 +410,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 12,
   },
+  titleLogo: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    marginLeft: 4,
+  },
   profileLeft: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -266,6 +451,40 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6D7B9A',
   },
+  profileAttendanceWrap: {
+    marginTop: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  profileAttendanceDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 999,
+  },
+  profileAttendanceDotPending: { backgroundColor: '#DC2626' },
+  profileAttendanceDotIn: { backgroundColor: '#D97706' },
+  profileAttendanceDotDone: { backgroundColor: '#16A34A' },
+  profileAttendanceText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  goldCoinRow: {
+    marginTop: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  goldText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#CDAB2C',
+  },
+  coinText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#701011',
+  },
   profileIconWrap: {
     width: 34,
     height: 34,
@@ -279,6 +498,13 @@ const styles = StyleSheet.create({
     fontSize: 30,
     fontWeight: '800',
     color: '#111827',
+  },
+  titleRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
   },
   statsRow: {
     marginTop: 18,
@@ -515,6 +741,53 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 14,
   },
+  attendanceInlineWrap: {
+    alignItems: 'flex-end',
+    gap: 5,
+  },
+  swipeTrack: {
+    width: 188,
+    height: 46,
+    borderRadius: 999,
+    backgroundColor: '#E8EDF4',
+    borderWidth: 1,
+    borderColor: '#D8DFD1',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  swipeThumb: {
+    position: 'absolute',
+    left: 3,
+    top: 3,
+    width: 91,
+    height: 40,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
+  swipeSegmentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 46,
+  },
+  swipeSegment: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  swipeSegmentText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  attendanceStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  attendanceStatusDot: { width: 7, height: 7, borderRadius: 999 },
+  attendanceStatusDotPending: { backgroundColor: '#DC2626' },
+  attendanceStatusDotIn: { backgroundColor: '#D97706' },
+  attendanceStatusDotDone: { backgroundColor: '#16A34A' },
+  attendanceInlineStatus: { fontSize: 11, fontWeight: '700', color: '#334155' },
+  attendanceError: { marginTop: 6, color: '#B91C1C', fontSize: 12, fontWeight: '600' },
   ticketImage: {
     marginTop: 10,
     width: '100%',
