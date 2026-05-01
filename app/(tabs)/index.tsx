@@ -1,5 +1,7 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useNetInfo } from '@react-native-community/netinfo';
 import * as Location from 'expo-location';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Image, PanResponder, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -10,6 +12,23 @@ import { useAuth } from '@/context/auth-context';
 import { useTickets } from '@/context/ticket-context';
 import { apiRequest } from '@/lib/api';
 
+type AttendanceType = 'check-in' | 'check-out';
+type AttendanceSnapshot = {
+  checkedIn: boolean;
+  checkedOut: boolean;
+  checkIn?: { capturedAt?: string } | null;
+  checkOut?: { capturedAt?: string } | null;
+};
+type PendingAttendanceAction = {
+  type: AttendanceType;
+  latitude: number;
+  longitude: number;
+  capturedAt: string;
+};
+
+const ATTENDANCE_QUEUE_KEY = 'attendance_pending_queue';
+const ATTENDANCE_CACHE_KEY = 'attendance_today_cache';
+
 export default function HomeScreen() {
   const SWIPE_TRACK_WIDTH = 188;
   const SWIPE_MAX_X = (SWIPE_TRACK_WIDTH - 6) / 2;
@@ -18,6 +37,8 @@ export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user, token } = useAuth();
+  const netInfo = useNetInfo();
+  const isOffline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
   const { tickets, isLoading, assignedNotificationCount, markAssignedNotificationsRead, startTicket } = useTickets();
   const [attendance, setAttendance] = useState<{
     checkedIn: boolean;
@@ -27,6 +48,7 @@ export default function HomeScreen() {
   } | null>(null);
   const [attendanceError, setAttendanceError] = useState('');
   const [attendanceLoading, setAttendanceLoading] = useState(false);
+  const [pendingAttendanceActions, setPendingAttendanceActions] = useState<PendingAttendanceAction[]>([]);
   const openTickets = tickets.filter((ticket) => ticket.status !== 'completed');
   const pendingCount = tickets.filter((ticket) => ticket.status === 'pending').length;
   const activeCount = tickets.filter((ticket) => ticket.status === 'in_progress').length;
@@ -39,9 +61,81 @@ export default function HomeScreen() {
   }, [attendance]);
   const swipeX = useRef(new Animated.Value(0)).current;
 
+  const persistPendingAttendanceActions = useCallback(async (items: PendingAttendanceAction[]) => {
+    setPendingAttendanceActions(items);
+    await AsyncStorage.setItem(ATTENDANCE_QUEUE_KEY, JSON.stringify(items));
+  }, []);
+
+  const applyLocalAttendance = useCallback((prev: AttendanceSnapshot | null, type: AttendanceType, capturedAt: string): AttendanceSnapshot => {
+    const base = prev ?? { checkedIn: false, checkedOut: false, checkIn: null, checkOut: null };
+    if (type === 'check-in') {
+      return {
+        ...base,
+        checkedIn: true,
+        checkIn: { capturedAt },
+      };
+    }
+    return {
+      ...base,
+      checkedOut: true,
+      checkOut: { capturedAt },
+    };
+  }, []);
+
+  const queueAttendanceAction = useCallback(async (action: PendingAttendanceAction) => {
+    const next = [...pendingAttendanceActions, action];
+    await persistPendingAttendanceActions(next);
+    const localNext = applyLocalAttendance(attendance, action.type, action.capturedAt);
+    setAttendance(localNext);
+    await AsyncStorage.setItem(ATTENDANCE_CACHE_KEY, JSON.stringify(localNext));
+  }, [pendingAttendanceActions, persistPendingAttendanceActions, applyLocalAttendance, attendance]);
+
+  const syncPendingAttendance = useCallback(async () => {
+    if (!token || pendingAttendanceActions.length === 0 || isOffline) return;
+    const remaining: PendingAttendanceAction[] = [];
+    for (const action of pendingAttendanceActions) {
+      try {
+        await apiRequest(`/api/attendance/${action.type}`, {
+          method: 'POST',
+          token,
+          body: {
+            latitude: action.latitude,
+            longitude: action.longitude,
+          },
+        });
+      } catch {
+        remaining.push(action);
+      }
+    }
+    await persistPendingAttendanceActions(remaining);
+    if (remaining.length === 0) {
+      const refreshed = await apiRequest<AttendanceSnapshot>('/api/attendance/today', { token });
+      setAttendance(refreshed);
+      await AsyncStorage.setItem(ATTENDANCE_CACHE_KEY, JSON.stringify(refreshed));
+      setAttendanceError('');
+    } else {
+      setAttendanceError('Some attendance actions are pending sync.');
+    }
+  }, [token, pendingAttendanceActions, isOffline, persistPendingAttendanceActions]);
+
   useEffect(() => {
     swipeX.setValue(SWIPE_CENTER_X);
   }, [swipeX, SWIPE_CENTER_X]);
+
+  useEffect(() => {
+    const hydrateAttendanceState = async () => {
+      const [queueRaw, attendanceRaw] = await Promise.all([
+        AsyncStorage.getItem(ATTENDANCE_QUEUE_KEY),
+        AsyncStorage.getItem(ATTENDANCE_CACHE_KEY),
+      ]);
+      const queue = queueRaw ? (JSON.parse(queueRaw) as PendingAttendanceAction[]) : [];
+      setPendingAttendanceActions(queue);
+      if (attendanceRaw) {
+        setAttendance(JSON.parse(attendanceRaw) as AttendanceSnapshot);
+      }
+    };
+    hydrateAttendanceState().catch(() => {});
+  }, []);
 
   const animateThumbTo = useCallback((value: number) => {
     Animated.spring(swipeX, {
@@ -52,7 +146,7 @@ export default function HomeScreen() {
     }).start();
   }, [swipeX]);
 
-  const captureAndSubmitAttendance = useCallback(async (type: 'check-in' | 'check-out') => {
+  const captureAndSubmitAttendance = useCallback(async (type: AttendanceType) => {
     if (!token) return;
     setAttendanceError('');
     setAttendanceLoading(true);
@@ -65,6 +159,18 @@ export default function HomeScreen() {
       const current = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
       });
+      const capturedAt = new Date().toISOString();
+
+      if (isOffline) {
+        await queueAttendanceAction({
+          type,
+          latitude: current.coords.latitude,
+          longitude: current.coords.longitude,
+          capturedAt,
+        });
+        setAttendanceError('Offline: attendance saved and will sync when internet is back.');
+        return;
+      }
 
       await apiRequest(`/api/attendance/${type}`, {
         method: 'POST',
@@ -75,20 +181,35 @@ export default function HomeScreen() {
         },
       });
 
-      const refreshed = await apiRequest<{
-        checkedIn: boolean;
-        checkedOut: boolean;
-        checkIn?: { capturedAt?: string } | null;
-        checkOut?: { capturedAt?: string } | null;
-      }>('/api/attendance/today', { token });
+      const refreshed = await apiRequest<AttendanceSnapshot>('/api/attendance/today', { token });
       setAttendance(refreshed);
+      await AsyncStorage.setItem(ATTENDANCE_CACHE_KEY, JSON.stringify(refreshed));
     } catch (e) {
-      setAttendanceError(e instanceof Error ? e.message : 'Failed to update attendance');
+      const message = e instanceof Error ? e.message : 'Failed to update attendance';
+      if (/network request failed|failed to fetch|network error|internet/i.test(message)) {
+        try {
+          const fallbackLocation = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+          const capturedAt = new Date().toISOString();
+          await queueAttendanceAction({
+            type,
+            latitude: fallbackLocation.coords.latitude,
+            longitude: fallbackLocation.coords.longitude,
+            capturedAt,
+          });
+          setAttendanceError('Offline: attendance saved and will sync when internet is back.');
+        } catch {
+          setAttendanceError('Failed to update attendance');
+        }
+      } else {
+        setAttendanceError(message);
+      }
     } finally {
       setAttendanceLoading(false);
       animateThumbTo(SWIPE_CENTER_X);
     }
-  }, [token, animateThumbTo, SWIPE_CENTER_X]);
+  }, [token, isOffline, queueAttendanceAction, animateThumbTo, SWIPE_CENTER_X]);
 
   const attendancePanResponder = useMemo(
     () =>
@@ -120,13 +241,19 @@ export default function HomeScreen() {
 
   useEffect(() => {
     if (!token) return;
-    apiRequest<{ checkedIn: boolean; checkedOut: boolean; checkIn?: { capturedAt?: string } | null; checkOut?: { capturedAt?: string } | null }>(
-      '/api/attendance/today',
-      { token }
-    )
-      .then(setAttendance)
+    if (isOffline) return;
+    apiRequest<AttendanceSnapshot>('/api/attendance/today', { token })
+      .then(async (result) => {
+        setAttendance(result);
+        await AsyncStorage.setItem(ATTENDANCE_CACHE_KEY, JSON.stringify(result));
+      })
       .catch((e) => setAttendanceError(e instanceof Error ? e.message : 'Failed to load attendance status'));
-  }, [token]);
+  }, [token, isOffline]);
+
+  useEffect(() => {
+    if (!token || isOffline || pendingAttendanceActions.length === 0) return;
+    syncPendingAttendance().catch(() => {});
+  }, [token, isOffline, pendingAttendanceActions.length, syncPendingAttendance]);
 
   return (
     <View style={styles.page}>
@@ -211,7 +338,11 @@ export default function HomeScreen() {
                   ]}
                 />
                 <Text style={styles.attendanceInlineStatus}>
-                  {attendanceLoading ? 'Updating...' : `${attendanceStatusLabel} (swipe both ways)`}
+                  {attendanceLoading
+                    ? 'Updating...'
+                    : pendingAttendanceActions.length > 0
+                    ? `${attendanceStatusLabel} (${pendingAttendanceActions.length} pending sync)`
+                    : `${attendanceStatusLabel} (swipe both ways)`}
                 </Text>
               </View>
             </View>
