@@ -21,6 +21,7 @@ type AuthContextValue = {
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  pushTokenSyncError: string | null;
   signIn: (payload: SignInPayload) => Promise<void>;
   signUp: (payload: SignUpPayload) => Promise<AuthUser>;
   signOut: () => Promise<void>;
@@ -59,10 +60,23 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 const TOKEN_KEY = 'ticket_app_token';
 const USER_KEY = 'ticket_app_user';
 
+function normalizeAuthUser(raw: AuthUser & { _id?: string }): AuthUser {
+  return {
+    id: raw.id || raw._id || '',
+    name: raw.name,
+    phone: raw.phone,
+    role: raw.role,
+    isMainAdmin: raw.isMainAdmin,
+    department: raw.department,
+    profileImageUrl: raw.profileImageUrl,
+  };
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [pushTokenSyncError, setPushTokenSyncError] = useState<string | null>(null);
 
   useEffect(() => {
     const hydrate = async () => {
@@ -74,7 +88,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (savedToken && savedUser) {
           setToken(savedToken);
-          setUser(JSON.parse(savedUser) as AuthUser);
+          setUser(normalizeAuthUser(JSON.parse(savedUser) as AuthUser & { _id?: string }));
         }
       } finally {
         setIsLoading(false);
@@ -90,24 +104,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const isExpoGo = Constants.appOwnership === 'expo';
       if (isExpoGo) return;
       try {
+        setPushTokenSyncError(null);
         const Notifications = await import('expo-notifications');
+        const projectId = Constants.expoConfig?.extra?.eas?.projectId;
         const settings = await Notifications.getPermissionsAsync();
         const finalStatus =
           settings.status === 'granted'
             ? 'granted'
             : (await Notifications.requestPermissionsAsync()).status;
-        if (finalStatus !== 'granted') return;
+        if (finalStatus !== 'granted') {
+          const msg = 'Notification permission not granted on this device.';
+          setPushTokenSyncError(msg);
+          console.warn('[push-token] Permission denied for push notifications');
+          return;
+        }
 
-        const expoPushToken = (await Notifications.getExpoPushTokenAsync()).data;
-        if (!expoPushToken) return;
+        const expoPushToken = (
+          await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined)
+        ).data;
+        if (!expoPushToken) {
+          const msg = 'Failed to generate Expo push token.';
+          setPushTokenSyncError(msg);
+          console.warn('[push-token] Expo push token not received');
+          return;
+        }
 
         await apiRequest('/api/auth/push-token', {
           method: 'PATCH',
           token,
           body: { pushToken: expoPushToken },
         });
-      } catch {
-        // Push token registration should not block auth flow.
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Push token sync failed';
+        setPushTokenSyncError(message);
+        console.error('[push-token] Sync failed:', message);
       }
     };
 
@@ -136,8 +166,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const response = await apiRequest<{ user: AuthUser }>('/api/auth/me', {
           token,
         });
-        setUser(response.user);
-        await AsyncStorage.setItem(USER_KEY, JSON.stringify(response.user));
+        const normalized = normalizeAuthUser(response.user as AuthUser & { _id?: string });
+        setUser(normalized);
+        await AsyncStorage.setItem(USER_KEY, JSON.stringify(normalized));
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Request failed';
         if (/not authorized|user not found/i.test(message)) {
@@ -154,12 +185,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       token,
       isAuthenticated: Boolean(user),
       isLoading,
+      pushTokenSyncError,
       signIn: async (payload) => {
         const response = await apiRequest<AuthResponse>('/api/auth/login', {
           method: 'POST',
           body: payload,
         });
-        await persistAuth(response.token, response.user);
+        if (!response.user) {
+          throw new Error('User not found. Please sign in again.');
+        }
+        await persistAuth(response.token, normalizeAuthUser(response.user as AuthUser & { _id?: string }));
       },
       signUp: async (payload) => {
         let response: AuthResponse;
@@ -213,16 +248,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (response.user) {
-          await persistAuth(response.token, response.user);
-          return response.user;
+          const normalized = normalizeAuthUser(response.user as AuthUser & { _id?: string });
+          await persistAuth(response.token, normalized);
+          return normalized;
         }
 
         try {
           const meResponse = await apiRequest<{ user: AuthUser }>('/api/auth/me', {
             token: response.token,
           });
-          await persistAuth(response.token, meResponse.user);
-          return meResponse.user;
+          const normalized = normalizeAuthUser(meResponse.user as AuthUser & { _id?: string });
+          await persistAuth(response.token, normalized);
+          return normalized;
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Sign up failed';
           if (/not authorized|user not found/i.test(message)) {
@@ -241,8 +278,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const response = await apiRequest<{ user: AuthUser }>('/api/auth/me', {
             token,
           });
-          setUser(response.user);
-          await AsyncStorage.setItem(USER_KEY, JSON.stringify(response.user));
+          const normalized = normalizeAuthUser(response.user as AuthUser & { _id?: string });
+          setUser(normalized);
+          await AsyncStorage.setItem(USER_KEY, JSON.stringify(normalized));
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Request failed';
           if (/not authorized|user not found/i.test(message)) {
@@ -253,7 +291,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       },
     }),
-    [isLoading, token, user]
+    [isLoading, pushTokenSyncError, token, user]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

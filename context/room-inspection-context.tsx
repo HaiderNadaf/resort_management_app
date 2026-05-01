@@ -49,6 +49,11 @@ type PendingAction =
   | { type: 'checklist'; id: string; payload: { checklist: RoomInspectionChecklistItem[]; notes?: string } }
   | { type: 'complete'; id: string };
 
+type AssignCategoryResponse = {
+  message: string;
+  push?: { ok: boolean; reason?: string };
+};
+
 type RoomInspectionContextValue = {
   isLoading: boolean;
   pendingSyncCount: number;
@@ -60,7 +65,7 @@ type RoomInspectionContextValue = {
   loadInspection: (id: string) => Promise<RoomInspection | null>;
   saveChecklist: (id: string, checklist: RoomInspectionChecklistItem[], notes?: string, imageUri?: string) => Promise<void>;
   completeRoom: (id: string) => Promise<void>;
-  assignCategory: (date: string, categoryKey: string, assignedTo: string) => Promise<void>;
+  assignCategory: (date: string, categoryKey: string, assignedTo: string) => Promise<AssignCategoryResponse>;
   loadAssignableUsers: () => Promise<Array<{ _id: string; name: string; role: string; department?: string | null }>>;
   getCalendarDays: (month: string) => RoomCalendarDay[];
   loadCalendar: (month: string) => Promise<void>;
@@ -239,13 +244,14 @@ export function RoomInspectionProvider({ children }: { children: React.ReactNode
 
   const assignCategory = async (date: string, categoryKey: string, assignedTo: string) => {
     if (!token) throw new Error('Not authenticated');
-    await apiRequest('/api/room-inspections/assign-category', {
+    const response = await apiRequest<AssignCategoryResponse>('/api/room-inspections/assign-category', {
       method: 'PATCH',
       token,
       body: { inspectionDate: date, categoryKey, assignedTo },
     });
     await loadDashboard(date);
     await loadRooms(date, categoryKey);
+    return response;
   };
 
   const loadAssignableUsers = async () => {

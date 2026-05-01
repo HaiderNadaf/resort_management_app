@@ -32,6 +32,10 @@ export default function RootLayout() {
     const setupNotificationHandler = async () => {
       if (Constants.appOwnership === 'expo') return;
       const Notifications = await import('expo-notifications');
+      await Notifications.setNotificationChannelAsync('default', {
+        name: 'default',
+        importance: Notifications.AndroidImportance.MAX,
+      });
       Notifications.setNotificationHandler({
         handleNotification: async () => ({
           shouldShowBanner: true,
@@ -41,7 +45,9 @@ export default function RootLayout() {
         }),
       });
     };
-    setupNotificationHandler().catch(() => {});
+    setupNotificationHandler().catch((error) => {
+      console.error('[notifications] Handler setup failed:', error);
+    });
   }, []);
 
   return (

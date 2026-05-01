@@ -8,7 +8,7 @@ import { useTickets } from '@/context/ticket-context';
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { user, signOut } = useAuth();
+  const { user, signOut, pushTokenSyncError } = useAuth();
   const { tickets } = useTickets();
   const assignedToMeCount = tickets.filter((ticket) => ticket.assignedTo?._id === user?.id).length;
 
@@ -65,6 +65,13 @@ export default function ProfileScreen() {
             <Text style={styles.metricLabel}>Total in system</Text>
           </View>
         </View>
+
+        {pushTokenSyncError ? (
+          <View style={styles.warnBox}>
+            <Text style={styles.warnTitle}>Push notifications may not work</Text>
+            <Text style={styles.warnText}>{pushTokenSyncError}</Text>
+          </View>
+        ) : null}
 
         <View style={styles.menuCard}>
           <MenuItem icon="notifications-outline" label="Notifications" />
@@ -272,6 +279,26 @@ const styles = StyleSheet.create({
     marginTop: 5,
     fontSize: 12,
     color: '#8A94A6',
+    fontWeight: '600',
+  },
+  warnBox: {
+    marginTop: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  warnTitle: {
+    color: '#991B1B',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  warnText: {
+    marginTop: 2,
+    color: '#B91C1C',
+    fontSize: 12,
     fontWeight: '600',
   },
   menuCard: {

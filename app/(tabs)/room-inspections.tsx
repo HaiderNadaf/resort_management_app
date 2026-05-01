@@ -197,8 +197,15 @@ export default function RoomInspectionsTab() {
                               setSuccessMessage('');
                               setIsAssigning(category.categoryKey);
                               try {
-                                await assignCategory(selectedDate, category.categoryKey, staff._id);
-                                setSuccessMessage(`${category.categoryName} assigned to ${staff.name}`);
+                                const result = await assignCategory(selectedDate, category.categoryKey, staff._id);
+                                if (result.push?.ok === false) {
+                                  const reasonText = result.push.reason?.replace(/_/g, ' ') ?? 'push failed';
+                                  setScreenError(
+                                    `${category.categoryName} assigned to ${staff.name}, but push notification failed (${reasonText}).`
+                                  );
+                                } else {
+                                  setSuccessMessage(`${category.categoryName} assigned to ${staff.name}`);
+                                }
                                 setExpandedAssignCard(null);
                               } catch (e) {
                                 setScreenError(e instanceof Error ? e.message : 'Failed to assign staff.');
