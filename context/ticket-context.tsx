@@ -59,7 +59,7 @@ type CreateTicketPayload = {
 const TicketContext = createContext<TicketContextValue | null>(null);
 
 export function TicketProvider({ children }: { children: React.ReactNode }) {
-  const { token, isAuthenticated, user } = useAuth();
+  const { token, isAuthenticated, user, signOut } = useAuth();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [assignedNotificationCount, setAssignedNotificationCount] = useState(0);
@@ -94,6 +94,13 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
         const unseen = assignedToMe.filter((ticket) => !seenIds.has(ticket._id));
         setAssignedNotificationCount(unseen.length);
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Request failed';
+      if (/not authorized|user not found/i.test(message)) {
+        await signOut();
+        return;
+      }
+      throw error;
     } finally {
       setIsLoading(false);
     }
@@ -180,7 +187,7 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (isAuthenticated) {
-      refreshTickets();
+      refreshTickets().catch(() => {});
     } else {
       setTickets([]);
       setAssignedNotificationCount(0);

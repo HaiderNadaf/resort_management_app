@@ -8,5 +8,12 @@ module.exports = () => ({
       ...expo.updates,
       ...(process.env.EXPO_PUBLIC_UPDATES_URL ? { url: process.env.EXPO_PUBLIC_UPDATES_URL } : {}),
     },
+    extra: {
+      ...(expo.extra || {}),
+      eas: {
+        ...(expo.extra?.eas || {}),
+        ...(process.env.EAS_PROJECT_ID ? { projectId: process.env.EAS_PROJECT_ID } : {}),
+      },
+    },
   },
 });

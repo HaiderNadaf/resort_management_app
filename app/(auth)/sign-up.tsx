@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
 import * as ImagePicker from 'expo-image-picker';
+import { useNetInfo } from '@react-native-community/netinfo';
 import { Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -14,6 +15,8 @@ type UserRoleSelection = UserRole | null;
 export default function SignUpScreen() {
   const router = useRouter();
   const { signUp } = useAuth();
+  const netInfo = useNetInfo();
+  const isOffline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
 
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -25,6 +28,7 @@ export default function SignUpScreen() {
   const [profileImage, setProfileImage] = useState<{ uri: string; name?: string; type?: string } | null>(null);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formRenderKey, setFormRenderKey] = useState(0);
 
   const pickProfileImage = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -49,6 +53,11 @@ export default function SignUpScreen() {
   };
 
   const submit = async () => {
+    if (isOffline) {
+      setError('Internet is not connected. Please check your connection and try again.');
+      return;
+    }
+
     if (!name.trim() || !phone.trim() || !password.trim()) {
       setError('Please enter name, phone number, and password.');
       return;
@@ -77,7 +86,7 @@ export default function SignUpScreen() {
     setError('');
     try {
       setIsSubmitting(true);
-      await signUp({
+      const createdUser = await signUp({
         name: name.trim(),
         phone: phone.trim(),
         password: password.trim(),
@@ -86,9 +95,28 @@ export default function SignUpScreen() {
         isMainAdmin: role === 'admin' ? Boolean(isMainAdmin) : false,
         profileImage: role === 'employee' ? profileImage : null,
       });
+      if (!createdUser?.id) {
+        setError('User not found after sign up. Please try again.');
+        return;
+      }
       router.replace('/(tabs)');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Sign up failed');
+      const message = e instanceof Error ? e.message : 'Sign up failed';
+      const looksLikeNetworkError =
+        /network request failed|failed to fetch|network error|internet/i.test(message) || isOffline;
+      if (/user not found|not authorized/i.test(message)) {
+        setName('');
+        setPhone('');
+        setPassword('');
+        setRole(null);
+        setDepartment('');
+        setIsMainAdmin(null);
+        setProfileImage(null);
+        setError('User not found. Please sign up again.');
+        setFormRenderKey((prev) => prev + 1);
+        return;
+      }
+      setError(looksLikeNetworkError ? 'Internet is not connected. Please check your connection and try again.' : message);
     } finally {
       setIsSubmitting(false);
     }
@@ -98,6 +126,7 @@ export default function SignUpScreen() {
     <SafeAreaView style={styles.page} edges={['top', 'left', 'right']}>
       <KeyboardAvoidingView style={styles.keyboardWrap} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView
+        key={formRenderKey}
         contentContainerStyle={styles.container}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
@@ -110,6 +139,18 @@ export default function SignUpScreen() {
         </View>
         <Text style={styles.title}>Create account</Text>
         <Text style={styles.subtitle}>Join and manage your tickets with ease.</Text>
+
+        {isOffline ? (
+          <View style={styles.offlineCard}>
+            <View style={styles.offlineIconWrap}>
+              <Ionicons name="cloud-offline-outline" size={18} color={BrandColors.danger} />
+            </View>
+            <View style={styles.offlineTextWrap}>
+              <Text style={styles.offlineTitle}>Internet is not connected</Text>
+              <Text style={styles.offlineSubtitle}>Reconnect to continue sign up.</Text>
+            </View>
+          </View>
+        ) : null}
 
         <View style={styles.formCard}>
           <Text style={styles.formTitle}>Sign up</Text>
@@ -227,8 +268,10 @@ export default function SignUpScreen() {
 
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
-          <TouchableOpacity style={styles.submitButton} onPress={submit} disabled={isSubmitting}>
-            <Text style={styles.submitButtonText}>{isSubmitting ? 'Creating...' : 'Continue'}</Text>
+          <TouchableOpacity style={[styles.submitButton, (isSubmitting || isOffline) ? styles.submitButtonDisabled : null]} onPress={submit} disabled={isSubmitting || isOffline}>
+            <Text style={styles.submitButtonText}>
+              {isOffline ? 'Offline' : isSubmitting ? 'Creating...' : 'Continue'}
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity onPress={() => router.push('/(auth)/sign-in')}>
@@ -252,6 +295,29 @@ const styles = StyleSheet.create({
   logo: { width: 80, height: 80, borderRadius: 16 },
   title: { marginTop: 18, textAlign: 'center', fontSize: 28, fontWeight: '800', color: BrandColors.text },
   subtitle: { marginTop: 8, textAlign: 'center', fontSize: 15, lineHeight: 22, color: BrandColors.muted, marginBottom: 16 },
+  offlineCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FDF2F2',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#F8D5D5',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 14,
+  },
+  offlineIconWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#FBE5E5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  offlineTextWrap: { flex: 1 },
+  offlineTitle: { fontSize: 13, fontWeight: '800', color: BrandColors.danger },
+  offlineSubtitle: { fontSize: 12, color: BrandColors.muted, marginTop: 2 },
   formCard: {
     backgroundColor: BrandColors.cardBg,
     borderRadius: 22,
@@ -351,6 +417,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   submitButtonText: { color: '#FFFFFF', fontSize: 17, fontWeight: '700' },
+  submitButtonDisabled: { opacity: 0.7 },
   footerText: { marginTop: 16, textAlign: 'center', color: BrandColors.muted, fontSize: 14 },
   footerLink: { color: BrandColors.primary, fontWeight: '700' },
   imagePickerBtn: {

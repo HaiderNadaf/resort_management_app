@@ -39,9 +39,14 @@ export default function SignInScreen() {
       const message = e instanceof Error ? e.message : 'Sign in failed';
       if (
         message.toLowerCase().includes('user not found') ||
+        message.toLowerCase().includes('not authorized') ||
         message.toLowerCase().includes('invalid password') ||
         message.toLowerCase().includes('invalid role')
       ) {
+        if (message.toLowerCase().includes('user not found') || message.toLowerCase().includes('not authorized')) {
+          router.replace('/(auth)/sign-up');
+          return;
+        }
         setError('User not exist');
         return;
       }

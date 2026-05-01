@@ -22,14 +22,14 @@ type AuthContextValue = {
   isAuthenticated: boolean;
   isLoading: boolean;
   signIn: (payload: SignInPayload) => Promise<void>;
-  signUp: (payload: SignUpPayload) => Promise<void>;
+  signUp: (payload: SignUpPayload) => Promise<AuthUser>;
   signOut: () => Promise<void>;
   refreshUser: () => Promise<void>;
 };
 
 type AuthResponse = {
   token: string;
-  user: AuthUser;
+  user?: AuthUser;
 };
 
 type SignInPayload = {
@@ -123,6 +123,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     ]);
   };
 
+  const clearAuth = async () => {
+    setToken(null);
+    setUser(null);
+    await AsyncStorage.multiRemove([TOKEN_KEY, USER_KEY]);
+  };
+
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
@@ -183,20 +189,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           });
         }
 
-        await persistAuth(response.token, response.user);
+        if (!response.token) {
+          throw new Error('Sign up failed. Please try again.');
+        }
+
+        if (response.user) {
+          await persistAuth(response.token, response.user);
+          return response.user;
+        }
+
+        try {
+          const meResponse = await apiRequest<{ user: AuthUser }>('/api/auth/me', {
+            token: response.token,
+          });
+          await persistAuth(response.token, meResponse.user);
+          return meResponse.user;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Sign up failed';
+          if (/not authorized|user not found/i.test(message)) {
+            await clearAuth();
+            throw new Error('User not found after sign up. Please sign up again.');
+          }
+          throw error;
+        }
       },
       signOut: async () => {
-        setToken(null);
-        setUser(null);
-        await AsyncStorage.multiRemove([TOKEN_KEY, USER_KEY]);
+        await clearAuth();
       },
       refreshUser: async () => {
         if (!token) return;
-        const response = await apiRequest<{ user: AuthUser }>('/api/auth/me', {
-          token,
-        });
-        setUser(response.user);
-        await AsyncStorage.setItem(USER_KEY, JSON.stringify(response.user));
+        try {
+          const response = await apiRequest<{ user: AuthUser }>('/api/auth/me', {
+            token,
+          });
+          setUser(response.user);
+          await AsyncStorage.setItem(USER_KEY, JSON.stringify(response.user));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Request failed';
+          if (/not authorized|user not found/i.test(message)) {
+            await clearAuth();
+            return;
+          }
+          throw error;
+        }
       },
     }),
     [isLoading, token, user]
