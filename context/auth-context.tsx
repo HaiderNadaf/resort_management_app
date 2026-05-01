@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 import { apiRequest } from '@/lib/api';
 
@@ -114,20 +114,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     syncPushToken();
   }, [token, user?.id]);
 
-  const persistAuth = async (authToken: string, authUser: AuthUser) => {
+  const persistAuth = useCallback(async (authToken: string, authUser: AuthUser) => {
     setToken(authToken);
     setUser(authUser);
     await AsyncStorage.multiSet([
       [TOKEN_KEY, authToken],
       [USER_KEY, JSON.stringify(authUser)],
     ]);
-  };
+  }, []);
 
-  const clearAuth = async () => {
+  const clearAuth = useCallback(async () => {
     setToken(null);
     setUser(null);
     await AsyncStorage.multiRemove([TOKEN_KEY, USER_KEY]);
-  };
+  }, []);
+
+  useEffect(() => {
+    const verifyPersistedSession = async () => {
+      if (isLoading || !token) return;
+      try {
+        const response = await apiRequest<{ user: AuthUser }>('/api/auth/me', {
+          token,
+        });
+        setUser(response.user);
+        await AsyncStorage.setItem(USER_KEY, JSON.stringify(response.user));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Request failed';
+        if (/not authorized|user not found/i.test(message)) {
+          await clearAuth();
+        }
+      }
+    };
+    verifyPersistedSession().catch(() => {});
+  }, [isLoading, token, clearAuth]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

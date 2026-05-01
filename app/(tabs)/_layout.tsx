@@ -10,7 +10,7 @@ export default function TabLayout() {
   const normalizedDepartment = (user?.department || '').trim().toLowerCase();
   const canViewInspectionsTab = normalizedDepartment === 'house keeping';
   if (!isLoading && !isAuthenticated) {
-    return <Redirect href="/(auth)/sign-in" />;
+    return <Redirect href="/(auth)/sign-up" />;
   }
 
   return (
