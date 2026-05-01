@@ -1,3 +1,4 @@
+import { beginApiRequest, endApiRequest } from '@/lib/api-loading';
 const BASE_URL = process.env.EXPO_PUBLIC_BASE_URL;
 
 if (!BASE_URL) {
@@ -21,23 +22,28 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${BASE_URL}${path}`, {
-    method,
-    headers,
-    body: body ? (isFormData ? (body as FormData) : JSON.stringify(body)) : undefined,
-  });
+  beginApiRequest();
+  try {
+    const response = await fetch(`${BASE_URL}${path}`, {
+      method,
+      headers,
+      body: body ? (isFormData ? (body as FormData) : JSON.stringify(body)) : undefined,
+    });
 
-  const json = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message =
-      json?.message ||
-      (Array.isArray(json?.errors) && json.errors.length > 0
-        ? String(json.errors[0]?.msg || json.errors[0]?.message || 'Request failed')
-        : 'Request failed');
-    throw new Error(message);
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message =
+        json?.message ||
+        (Array.isArray(json?.errors) && json.errors.length > 0
+          ? String(json.errors[0]?.msg || json.errors[0]?.message || 'Request failed')
+          : 'Request failed');
+      throw new Error(message);
+    }
+
+    return json as T;
+  } finally {
+    endApiRequest();
   }
-
-  return json as T;
 }
 
 export { BASE_URL };

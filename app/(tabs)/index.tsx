@@ -1,8 +1,9 @@
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Image, PanResponder, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BrandColors } from '@/constants/brand';
 import { useAuth } from '@/context/auth-context';
@@ -11,11 +12,11 @@ import { apiRequest } from '@/lib/api';
 
 export default function HomeScreen() {
   const SWIPE_TRACK_WIDTH = 188;
-  const SWIPE_THUMB_WIDTH = 40;
   const SWIPE_MAX_X = (SWIPE_TRACK_WIDTH - 6) / 2;
   const SWIPE_CENTER_X = SWIPE_MAX_X / 2;
   const SWIPE_TRIGGER_GAP = 20;
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { user, token } = useAuth();
   const { tickets, isLoading, assignedNotificationCount, markAssignedNotificationsRead, startTicket } = useTickets();
   const [attendance, setAttendance] = useState<{
@@ -42,54 +43,16 @@ export default function HomeScreen() {
     swipeX.setValue(SWIPE_CENTER_X);
   }, [swipeX, SWIPE_CENTER_X]);
 
-  const animateThumbTo = (value: number) => {
+  const animateThumbTo = useCallback((value: number) => {
     Animated.spring(swipeX, {
       toValue: value,
       useNativeDriver: false,
       friction: 7,
       tension: 90,
     }).start();
-  };
+  }, [swipeX]);
 
-  const attendancePanResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
-        onPanResponderMove: (_, gestureState) => {
-          if (attendanceLoading) return;
-          const next = Math.max(0, Math.min(SWIPE_MAX_X, SWIPE_CENTER_X + gestureState.dx));
-          swipeX.setValue(next);
-        },
-        onPanResponderRelease: () => {
-          if (attendanceLoading) return;
-          swipeX.stopAnimation((currentX) => {
-            if (currentX >= SWIPE_CENTER_X + SWIPE_TRIGGER_GAP) {
-              animateThumbTo(SWIPE_MAX_X);
-              captureAndSubmitAttendance('check-in');
-            } else if (currentX <= SWIPE_CENTER_X - SWIPE_TRIGGER_GAP) {
-              animateThumbTo(0);
-              captureAndSubmitAttendance('check-out');
-            } else {
-              animateThumbTo(SWIPE_CENTER_X);
-            }
-          });
-        },
-      }),
-    [attendanceLoading, swipeX, SWIPE_CENTER_X, SWIPE_MAX_X, SWIPE_TRIGGER_GAP]
-  );
-
-  useEffect(() => {
-    if (!token) return;
-    apiRequest<{ checkedIn: boolean; checkedOut: boolean; checkIn?: { capturedAt?: string } | null; checkOut?: { capturedAt?: string } | null }>(
-      '/api/attendance/today',
-      { token }
-    )
-      .then(setAttendance)
-      .catch((e) => setAttendanceError(e instanceof Error ? e.message : 'Failed to load attendance status'));
-  }, [token]);
-
-  const captureAndSubmitAttendance = async (type: 'check-in' | 'check-out') => {
+  const captureAndSubmitAttendance = useCallback(async (type: 'check-in' | 'check-out') => {
     if (!token) return;
     setAttendanceError('');
     setAttendanceLoading(true);
@@ -125,16 +88,58 @@ export default function HomeScreen() {
       setAttendanceLoading(false);
       animateThumbTo(SWIPE_CENTER_X);
     }
-  };
+  }, [token, animateThumbTo, SWIPE_CENTER_X]);
+
+  const attendancePanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderMove: (_, gestureState) => {
+          if (attendanceLoading) return;
+          const next = Math.max(0, Math.min(SWIPE_MAX_X, SWIPE_CENTER_X + gestureState.dx));
+          swipeX.setValue(next);
+        },
+        onPanResponderRelease: () => {
+          if (attendanceLoading) return;
+          swipeX.stopAnimation((currentX) => {
+            if (currentX >= SWIPE_CENTER_X + SWIPE_TRIGGER_GAP) {
+              animateThumbTo(SWIPE_MAX_X);
+              captureAndSubmitAttendance('check-in');
+            } else if (currentX <= SWIPE_CENTER_X - SWIPE_TRIGGER_GAP) {
+              animateThumbTo(0);
+              captureAndSubmitAttendance('check-out');
+            } else {
+              animateThumbTo(SWIPE_CENTER_X);
+            }
+          });
+        },
+      }),
+    [attendanceLoading, swipeX, SWIPE_CENTER_X, SWIPE_MAX_X, SWIPE_TRIGGER_GAP, animateThumbTo, captureAndSubmitAttendance]
+  );
+
+  useEffect(() => {
+    if (!token) return;
+    apiRequest<{ checkedIn: boolean; checkedOut: boolean; checkIn?: { capturedAt?: string } | null; checkOut?: { capturedAt?: string } | null }>(
+      '/api/attendance/today',
+      { token }
+    )
+      .then(setAttendance)
+      .catch((e) => setAttendanceError(e instanceof Error ? e.message : 'Failed to load attendance status'));
+  }, [token]);
 
   return (
     <View style={styles.page}>
-      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
-      <View style={styles.goldCoinRow}>
-                <Text style={styles.goldText}>Gold</Text>
-                <Text style={styles.coinText}> coins & clubs</Text>
-                <Image source={require('@/assets/images/logo.png')} style={styles.titleLogo} />
-              </View>
+      <ScrollView
+        contentContainerStyle={[styles.container, { paddingTop: Math.max(insets.top, 12) + 8 }]}
+        showsVerticalScrollIndicator={false}>
+        <View style={styles.brandRow}>
+          <View style={styles.brandTextWrap}>
+            <Text style={styles.goldText}>Gold</Text>
+            <Text style={styles.coinText}> coins & clubs</Text>
+          </View>
+          <Image source={require('@/assets/images/logo.png')} style={styles.titleLogo} accessibilityIgnoresInvertColors />
+        </View>
         <View style={styles.profileBar}>
           <View style={styles.profileLeft}>
             {user?.profileImageUrl ? (
@@ -164,7 +169,7 @@ export default function HomeScreen() {
            
           </View>
           <View style={styles.profileIconWrap}>
-            <Ionicons name="notifications-outline" size={18} color="#1D391D" />
+            <Ionicons name="notifications-outline" size={18} color={BrandColors.primary} />
           </View>
         </View>
 
@@ -389,8 +394,7 @@ const styles = StyleSheet.create({
   },
   container: {
     paddingHorizontal: 16,
-    paddingTop: 56,
-    paddingBottom: 24,
+    paddingBottom: 28,
   },
   kicker: {
     fontSize: 12,
@@ -399,22 +403,34 @@ const styles = StyleSheet.create({
     letterSpacing: 0.7,
   },
   profileBar: {
-    marginBottom: 10,
-    minHeight: 60,
-    borderRadius: 14,
+    marginBottom: 12,
+    minHeight: 64,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#D8DFD1',
-    backgroundColor: '#FFFFFF',
+    borderColor: BrandColors.border,
+    backgroundColor: BrandColors.cardBg,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
+    shadowColor: '#111827',
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
   },
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+    paddingRight: 2,
+  },
+  brandTextWrap: { flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', flex: 1, paddingRight: 8 },
   titleLogo: {
-    width: 20,
-    height: 20,
+    width: 36,
+    height: 36,
     borderRadius: 10,
-    marginLeft: 4,
   },
   profileLeft: {
     flexDirection: 'row',
@@ -470,20 +486,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#334155',
   },
-  goldCoinRow: {
-    marginTop: 2,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
   goldText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#CDAB2C',
+    fontSize: 13,
+    fontWeight: '800',
+    color: BrandColors.mustard,
+    letterSpacing: 0.3,
   },
   coinText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#701011',
+    fontSize: 13,
+    fontWeight: '800',
+    color: BrandColors.danger,
+    letterSpacing: 0.2,
   },
   profileIconWrap: {
     width: 34,
@@ -513,9 +526,9 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    borderRadius: 14,
-    backgroundColor: '#FFFFFF',
-    borderColor: '#D8DFD1',
+    borderRadius: 16,
+    backgroundColor: BrandColors.cardBg,
+    borderColor: BrandColors.border,
     borderWidth: 1,
     paddingVertical: 14,
     paddingHorizontal: 12,
@@ -555,10 +568,10 @@ const styles = StyleSheet.create({
     color: '#7E8798',
   },
   ticketCard: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#D8DFD1',
+    backgroundColor: BrandColors.cardBg,
+    borderColor: BrandColors.border,
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: 18,
     padding: 14,
     marginBottom: 12,
     shadowColor: '#1F2937',
