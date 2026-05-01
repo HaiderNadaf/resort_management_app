@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "frontend",
+    "name": "Gold Coins Ops",
     "slug": "frontend",
     "version": "1.0.0",
     "runtimeVersion": {
@@ -20,6 +20,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.gcc.frontend",
       "adaptiveIcon": {
         "backgroundColor": "#000000",
         "foregroundImage": "./assets/images/icon.jpg"
