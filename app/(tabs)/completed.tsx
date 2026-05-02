@@ -1,12 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { BrandColors } from '@/constants/brand';
 import { useTickets } from '@/context/ticket-context';
 
 export default function CompletedScreen() {
-  const { tickets, isLoading } = useTickets();
-  const completedTickets = tickets.filter((ticket) => ticket.status === 'completed');
+  const {
+    completedTickets,
+    isLoadingCompleted,
+    completedPage,
+    completedTotalPages,
+    completedTotalCount,
+    setCompletedPage,
+  } = useTickets();
 
   return (
     <View style={styles.page}>
@@ -14,13 +20,15 @@ export default function CompletedScreen() {
         <Text style={styles.kicker}>DONE & DUSTED</Text>
         <View style={styles.titleRow}>
           <Text style={styles.title}>Completed</Text>
-          <Text style={styles.bigCount}>{completedTickets.length}</Text>
+          <Text style={styles.bigCount}>{completedTotalCount}</Text>
         </View>
 
-        <Text style={styles.subtitle}>tickets resolved</Text>
+        <Text style={styles.subtitle}>
+          tickets resolved · page {completedPage} of {completedTotalPages}
+        </Text>
 
-        {isLoading ? <Text style={styles.emptyText}>Loading completed tickets...</Text> : null}
-        {!isLoading && completedTickets.length === 0 ? (
+        {isLoadingCompleted ? <Text style={styles.emptyText}>Loading completed tickets...</Text> : null}
+        {!isLoadingCompleted && completedTickets.length === 0 ? (
           <Text style={styles.emptyText}>No completed tickets yet.</Text>
         ) : null}
 
@@ -76,6 +84,35 @@ export default function CompletedScreen() {
           </View>
           );
         })}
+
+        {completedTotalPages > 1 ? (
+          <View style={styles.paginationRow}>
+            <TouchableOpacity
+              style={[styles.pageBtn, completedPage <= 1 ? styles.pageBtnDisabled : null]}
+              disabled={completedPage <= 1 || isLoadingCompleted}
+              onPress={() => setCompletedPage(completedPage - 1)}>
+              <Ionicons name="chevron-back" size={18} color={completedPage <= 1 ? '#9CA3AF' : '#1D391D'} />
+              <Text style={[styles.pageBtnText, completedPage <= 1 ? styles.pageBtnTextDisabled : null]}>Previous</Text>
+            </TouchableOpacity>
+            <Text style={styles.pageIndicator}>
+              {completedPage} / {completedTotalPages}
+            </Text>
+            <TouchableOpacity
+              style={[styles.pageBtn, completedPage >= completedTotalPages ? styles.pageBtnDisabled : null]}
+              disabled={completedPage >= completedTotalPages || isLoadingCompleted}
+              onPress={() => setCompletedPage(completedPage + 1)}>
+              <Text
+                style={[styles.pageBtnText, completedPage >= completedTotalPages ? styles.pageBtnTextDisabled : null]}>
+                Next
+              </Text>
+              <Ionicons
+                name="chevron-forward"
+                size={18}
+                color={completedPage >= completedTotalPages ? '#9CA3AF' : '#1D391D'}
+              />
+            </TouchableOpacity>
+          </View>
+        ) : null}
       </ScrollView>
     </View>
   );
@@ -250,6 +287,41 @@ const styles = StyleSheet.create({
     marginTop: 16,
     fontSize: 14,
     color: '#6D7B9A',
+  },
+  paginationRow: {
+    marginTop: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+  },
+  pageBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: BrandColors.border,
+    backgroundColor: BrandColors.cardBg,
+  },
+  pageBtnDisabled: {
+    opacity: 0.45,
+  },
+  pageBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: BrandColors.primary,
+  },
+  pageBtnTextDisabled: {
+    color: '#9CA3AF',
+  },
+  pageIndicator: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#334155',
   },
   imageRow: {
     marginTop: 10,

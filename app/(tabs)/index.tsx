@@ -39,7 +39,18 @@ export default function HomeScreen() {
   const { user, token } = useAuth();
   const netInfo = useNetInfo();
   const isOffline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
-  const { tickets, isLoading, assignedNotificationCount, markAssignedNotificationsRead, startTicket } = useTickets();
+  const {
+    tickets,
+    isLoading,
+    ticketSummary,
+    openPage,
+    openTotalPages,
+    openTotalCount,
+    setOpenPage,
+    assignedNotificationCount,
+    markAssignedNotificationsRead,
+    startTicket,
+  } = useTickets();
   const [attendance, setAttendance] = useState<{
     checkedIn: boolean;
     checkedOut: boolean;
@@ -49,10 +60,9 @@ export default function HomeScreen() {
   const [attendanceError, setAttendanceError] = useState('');
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [pendingAttendanceActions, setPendingAttendanceActions] = useState<PendingAttendanceAction[]>([]);
-  const openTickets = tickets.filter((ticket) => ticket.status !== 'completed');
-  const pendingCount = tickets.filter((ticket) => ticket.status === 'pending').length;
-  const activeCount = tickets.filter((ticket) => ticket.status === 'in_progress').length;
-  const recentTickets = openTickets.slice(0, 10);
+  const pendingCount = ticketSummary?.pendingCount ?? 0;
+  const activeCount = ticketSummary?.inProgressCount ?? 0;
+  const totalInScope = ticketSummary?.listScopeTotal ?? 0;
   const attendanceStatusLabel = useMemo(() => {
     const inAt = attendance?.checkIn?.capturedAt ? new Date(attendance.checkIn.capturedAt).getTime() : 0;
     const outAt = attendance?.checkOut?.capturedAt ? new Date(attendance.checkOut.capturedAt).getTime() : 0;
@@ -355,7 +365,7 @@ export default function HomeScreen() {
             <View style={[styles.iconWrap, { backgroundColor: '#E7ECE1' }]}>
               <Ionicons name="briefcase-outline" size={14} color="#1D391D" />
             </View>
-            <Text style={styles.statNumber}>{tickets.length}</Text>
+            <Text style={styles.statNumber}>{totalInScope}</Text>
             <Text style={styles.statLabel}>Total</Text>
           </View>
           <View style={styles.statCard}>
@@ -375,8 +385,10 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Recent Tickets</Text>
-          <Text style={styles.sectionCount}>{openTickets.length} open</Text>
+          <Text style={styles.sectionTitle}>Open tickets</Text>
+          <Text style={styles.sectionCount}>
+            {openTotalCount} open · page {openPage} of {openTotalPages}
+          </Text>
         </View>
 
         {user?.role === 'employee' && assignedNotificationCount > 0 ? (
@@ -395,9 +407,9 @@ export default function HomeScreen() {
           </TouchableOpacity>
         ) : null}
         {isLoading ? <Text style={styles.emptyText}>Loading tickets...</Text> : null}
-        {!isLoading && recentTickets.length === 0 ? <Text style={styles.emptyText}>No tickets found.</Text> : null}
+        {!isLoading && tickets.length === 0 ? <Text style={styles.emptyText}>No tickets found.</Text> : null}
 
-        {recentTickets.map((ticket) => {
+        {tickets.map((ticket) => {
           const status = getStatusMeta(ticket.status);
           const priority = getPriorityMeta(ticket.priority);
           const assigneeName = ticket.assignedTo?.name ?? 'Unassigned';
@@ -479,6 +491,28 @@ export default function HomeScreen() {
           </View>
           );
         })}
+
+        {openTotalPages > 1 ? (
+          <View style={styles.paginationRow}>
+            <TouchableOpacity
+              style={[styles.pageBtn, openPage <= 1 ? styles.pageBtnDisabled : null]}
+              disabled={openPage <= 1 || isLoading}
+              onPress={() => setOpenPage(openPage - 1)}>
+              <Ionicons name="chevron-back" size={18} color={openPage <= 1 ? '#9CA3AF' : '#1D391D'} />
+              <Text style={[styles.pageBtnText, openPage <= 1 ? styles.pageBtnTextDisabled : null]}>Previous</Text>
+            </TouchableOpacity>
+            <Text style={styles.pageIndicator}>
+              {openPage} / {openTotalPages}
+            </Text>
+            <TouchableOpacity
+              style={[styles.pageBtn, openPage >= openTotalPages ? styles.pageBtnDisabled : null]}
+              disabled={openPage >= openTotalPages || isLoading}
+              onPress={() => setOpenPage(openPage + 1)}>
+              <Text style={[styles.pageBtnText, openPage >= openTotalPages ? styles.pageBtnTextDisabled : null]}>Next</Text>
+              <Ionicons name="chevron-forward" size={18} color={openPage >= openTotalPages ? '#9CA3AF' : '#1D391D'} />
+            </TouchableOpacity>
+          </View>
+        ) : null}
       </ScrollView>
     </View>
   );
@@ -938,5 +972,41 @@ const styles = StyleSheet.create({
     height: 170,
     borderRadius: 12,
     backgroundColor: '#E5E7EB',
+  },
+  paginationRow: {
+    marginTop: 16,
+    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+  },
+  pageBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: BrandColors.border,
+    backgroundColor: BrandColors.cardBg,
+  },
+  pageBtnDisabled: {
+    opacity: 0.45,
+  },
+  pageBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: BrandColors.primary,
+  },
+  pageBtnTextDisabled: {
+    color: '#9CA3AF',
+  },
+  pageIndicator: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#334155',
   },
 });

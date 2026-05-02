@@ -1,13 +1,28 @@
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  Image,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { BrandColors } from '@/constants/brand';
 import { RoomInspectionChecklistItem, useRoomInspections } from '@/context/room-inspection-context';
 
 export default function RoomChecklistScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const scrollRef = useRef<ScrollView | null>(null);
   const { getInspectionById, loadInspection, saveChecklist, completeRoom, pendingSyncCount } = useRoomInspections();
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView | null>(null);
@@ -46,10 +61,18 @@ export default function RoomChecklistScreen() {
   const statusLabel = !inspection
     ? 'Pending'
     : inspection.status === 'completed'
-    ? 'Completed'
-    : inspection.status === 'in_progress'
-    ? 'In Progress'
-    : 'Pending';
+      ? 'Completed'
+      : inspection.status === 'in_progress'
+        ? 'In Progress'
+        : 'Pending';
+
+  const scrollNotesIntoView = () => {
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        scrollRef.current?.scrollToEnd({ animated: true });
+      }, 120);
+    });
+  };
 
   const toggleItem = (idx: number) => {
     setChecklist((prev) => prev.map((item, index) => (index === idx ? { ...item, isChecked: !item.isChecked } : item)));
@@ -57,6 +80,7 @@ export default function RoomChecklistScreen() {
 
   const pickProgressImage = async () => {
     try {
+      Keyboard.dismiss();
       if (!cameraPermission?.granted) {
         const requested = await requestCameraPermission();
         if (!requested.granted) {
@@ -149,9 +173,18 @@ export default function RoomChecklistScreen() {
     );
   }
 
+  const keyboardVerticalOffset = Platform.OS === 'ios' ? insets.top + 52 : 0;
+
   return (
-    <View style={styles.page}>
-      <ScrollView contentContainerStyle={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.page}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={keyboardVerticalOffset}>
+      <ScrollView
+        ref={scrollRef}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        contentContainerStyle={[styles.container, { paddingBottom: insets.bottom + 220 }]}>
         <Text style={styles.title}>{inspection?.roomLabel ?? 'Room Checklist'}</Text>
         <Text style={styles.subtitle}>Status: {statusLabel}</Text>
         <Text style={styles.subtitle}>
@@ -176,6 +209,7 @@ export default function RoomChecklistScreen() {
           placeholder="Add issue notes (optional)"
           style={styles.notesInput}
           multiline
+          onFocus={scrollNotesIntoView}
         />
         <TouchableOpacity style={styles.imageBtn} onPress={pickProgressImage}>
           <Text style={styles.imageBtnText}>{progressImageUri ? 'Change Image' : 'Upload Image'}</Text>
@@ -192,7 +226,7 @@ export default function RoomChecklistScreen() {
           <Text style={styles.saveText}>{isSaving ? 'Processing...' : 'Save & Complete Room'}</Text>
         </TouchableOpacity>
       </ScrollView>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -200,7 +234,7 @@ const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: '#F2F5EE' },
   pageCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F2F5EE' },
   blockTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
-  container: { paddingTop: 56, paddingHorizontal: 16, paddingBottom: 28 },
+  container: { paddingTop: 56, paddingHorizontal: 16 },
   title: { fontSize: 28, fontWeight: '800', color: '#111827' },
   subtitle: { marginTop: 5, fontSize: 14, color: '#64748B', fontWeight: '600' },
   listWrap: {
@@ -227,7 +261,7 @@ const styles = StyleSheet.create({
   itemLabel: { color: '#1F2937', fontSize: 14, fontWeight: '600' },
   notesLabel: { marginTop: 12, marginBottom: 6, fontSize: 13, fontWeight: '700', color: '#334155' },
   notesInput: {
-    minHeight: 88,
+    minHeight: 100,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#D8DFD1',
@@ -247,7 +281,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  imageBtnText: { color: '#1D391D', fontWeight: '700', fontSize: 13 },
+  imageBtnText: { color: BrandColors.primary, fontWeight: '700', fontSize: 13 },
   cameraPage: { flex: 1, backgroundColor: '#000' },
   camera: { flex: 1 },
   cameraActions: {
@@ -259,7 +293,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   captureBtn: {
-    backgroundColor: '#1D391D',
+    backgroundColor: BrandColors.primary,
     borderRadius: 12,
     minHeight: 46,
     minWidth: 120,
@@ -293,7 +327,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#1D391D',
+    backgroundColor: BrandColors.primary,
   },
   completeBtn: { backgroundColor: '#16A34A' },
   completeBtnDisabled: { backgroundColor: '#9CA3AF' },

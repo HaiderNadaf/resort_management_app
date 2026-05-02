@@ -9,8 +9,12 @@ import { useTickets } from '@/context/ticket-context';
 export default function ProfileScreen() {
   const router = useRouter();
   const { user, signOut, pushTokenSyncError } = useAuth();
-  const { tickets } = useTickets();
-  const assignedToMeCount = tickets.filter((ticket) => ticket.assignedTo?._id === user?.id).length;
+  const { ticketSummary } = useTickets();
+  const assignedToMeCount = ticketSummary?.assignedToYouTotal ?? 0;
+  const totalVisibleCount =
+    user?.role === 'employee'
+      ? (ticketSummary?.employeeUnionTotal ?? ticketSummary?.listScopeTotal ?? 0)
+      : (ticketSummary?.listScopeTotal ?? 0);
 
   const handleLogout = async () => {
     await signOut();
@@ -61,7 +65,7 @@ export default function ProfileScreen() {
             <Text style={styles.metricLabel}>Assigned to me</Text>
           </View>
           <View style={styles.metricCard}>
-            <Text style={styles.metricNumber}>{tickets.length}</Text>
+            <Text style={styles.metricNumber}>{totalVisibleCount}</Text>
             <Text style={styles.metricLabel}>Total in system</Text>
           </View>
         </View>

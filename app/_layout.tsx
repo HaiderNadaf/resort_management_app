@@ -8,6 +8,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import 'react-native-reanimated';
 
 import { GlobalApiLoader } from '@/components/global-api-loader';
+import { TicketPushNotificationHandler } from '@/components/ticket-push-notification-handler';
 import { AuthProvider } from '@/context/auth-context';
 import { RoomInspectionProvider } from '@/context/room-inspection-context';
 import { TicketProvider } from '@/context/ticket-context';
@@ -54,6 +55,7 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <AuthProvider>
         <TicketProvider>
+          <TicketPushNotificationHandler />
           <RoomInspectionProvider>
             <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
               <Stack>

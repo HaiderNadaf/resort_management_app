@@ -21,6 +21,8 @@
     },
     "android": {
       "package": "com.gcc.frontend",
+      "softwareKeyboardLayoutMode": "resize",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#000000",
         "foregroundImage": "./assets/images/icon.jpg"
