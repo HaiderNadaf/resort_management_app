@@ -208,8 +208,6 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
     try {
       await fetchSummary();
       await Promise.all([fetchOpenPage(1), fetchCompletedPage(1)]);
-      setOpenPage(1);
-      setCompletedPage(1);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Request failed';
       if (/not authorized|user not found/i.test(message)) {
