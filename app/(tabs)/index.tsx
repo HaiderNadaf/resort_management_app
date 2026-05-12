@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNetInfo } from '@react-native-community/netinfo';
 import * as Location from 'expo-location';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, PanResponder, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, Image, Modal, PanResponder, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BrandColors } from '@/constants/brand';
@@ -24,6 +24,16 @@ type PendingAttendanceAction = {
   latitude: number;
   longitude: number;
   capturedAt: string;
+};
+type AdminDailyTaskItem = {
+  _id: string;
+  taskTitle: string;
+  status: 'started' | 'completed';
+  startTime: string;
+  endTime?: string | null;
+  startImageUrl?: string | null;
+  endImageUrl?: string | null;
+  employee?: { name?: string | null } | null;
 };
 
 const ATTENDANCE_QUEUE_KEY = 'attendance_pending_queue';
@@ -60,6 +70,11 @@ export default function HomeScreen() {
   const [attendanceError, setAttendanceError] = useState('');
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [pendingAttendanceActions, setPendingAttendanceActions] = useState<PendingAttendanceAction[]>([]);
+  const [adminDailyTasks, setAdminDailyTasks] = useState<AdminDailyTaskItem[]>([]);
+  const [adminDailyTasksLoading, setAdminDailyTasksLoading] = useState(false);
+  const [adminView, setAdminView] = useState<'daily' | 'tickets'>('daily');
+  const [adminDailyDate, setAdminDailyDate] = useState<string>('');
+  const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
   const pendingCount = ticketSummary?.pendingCount ?? 0;
   const activeCount = ticketSummary?.inProgressCount ?? 0;
   const totalInScope = ticketSummary?.listScopeTotal ?? 0;
@@ -69,6 +84,40 @@ export default function HomeScreen() {
     if (!inAt && !outAt) return 'Not Marked';
     return outAt > inAt ? 'Checked Out' : 'Checked In';
   }, [attendance]);
+  const todayDateKey = useMemo(() => {
+    const date = new Date();
+    const year = date.getFullYear();
+    const month = `${date.getMonth() + 1}`.padStart(2, '0');
+    const day = `${date.getDate()}`.padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }, []);
+
+  useEffect(() => {
+    if (!adminDailyDate) setAdminDailyDate(todayDateKey);
+  }, [todayDateKey, adminDailyDate]);
+
+  const shiftAdminDailyDate = useCallback((days: number) => {
+    setAdminDailyDate((prev) => {
+      const current = prev || todayDateKey;
+      const [year, month, day] = current.split('-').map((value) => Number(value));
+      const base = new Date(year, (month || 1) - 1, day || 1);
+      base.setDate(base.getDate() + days);
+      const ny = base.getFullYear();
+      const nm = `${base.getMonth() + 1}`.padStart(2, '0');
+      const nd = `${base.getDate()}`.padStart(2, '0');
+      return `${ny}-${nm}-${nd}`;
+    });
+  }, [todayDateKey]);
+
+  const prettyAdminDailyDate = useMemo(() => {
+    const key = adminDailyDate || todayDateKey;
+    const [year, month, day] = key.split('-').map((value) => Number(value));
+    const date = new Date(year, (month || 1) - 1, day || 1);
+    return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  }, [adminDailyDate, todayDateKey]);
+
+  const isAdminDailyNextDisabled = (adminDailyDate || todayDateKey) >= todayDateKey;
+  const showTicketList = user?.role !== 'admin' || adminView === 'tickets';
   const swipeX = useRef(new Animated.Value(0)).current;
 
   const persistPendingAttendanceActions = useCallback(async (items: PendingAttendanceAction[]) => {
@@ -265,6 +314,29 @@ export default function HomeScreen() {
     syncPendingAttendance().catch(() => {});
   }, [token, isOffline, pendingAttendanceActions.length, syncPendingAttendance]);
 
+  useEffect(() => {
+    const loadAdminDailyTasks = async () => {
+      if (!token || user?.role !== 'admin') {
+        setAdminDailyTasks([]);
+        return;
+      }
+      const dateKey = adminDailyDate || todayDateKey;
+      setAdminDailyTasksLoading(true);
+      try {
+        const response = await apiRequest<{ tasks: AdminDailyTaskItem[] }>(
+          `/api/daily-tasks/admin?date=${encodeURIComponent(dateKey)}`,
+          { token }
+        );
+        setAdminDailyTasks(response.tasks || []);
+      } catch {
+        setAdminDailyTasks([]);
+      } finally {
+        setAdminDailyTasksLoading(false);
+      }
+    };
+    loadAdminDailyTasks().catch(() => {});
+  }, [token, user?.role, todayDateKey, adminDailyDate]);
+
   return (
     <View style={styles.page}>
       <ScrollView
@@ -384,12 +456,23 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Open tickets</Text>
-          <Text style={styles.sectionCount}>
-            {openTotalCount} open · page {openPage} of {openTotalPages}
-          </Text>
-        </View>
+        {user?.role === 'admin' ? (
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>{adminView === 'daily' ? 'Department Daily Activity' : 'Open tickets'}</Text>
+            <Text style={styles.sectionCount}>
+              {adminView === 'daily'
+                ? `${adminDailyTasks.length} records`
+                : `${openTotalCount} open · page ${openPage} of ${openTotalPages}`}
+            </Text>
+          </View>
+        ) : showTicketList ? (
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Open tickets</Text>
+            <Text style={styles.sectionCount}>
+              {openTotalCount} open · page {openPage} of {openTotalPages}
+            </Text>
+          </View>
+        ) : null}
 
         {user?.role === 'employee' && assignedNotificationCount > 0 ? (
           <TouchableOpacity style={styles.noticeCard} onPress={markAssignedNotificationsRead}>
@@ -400,16 +483,106 @@ export default function HomeScreen() {
           </TouchableOpacity>
         ) : null}
 
-        {user ? (
+        {user?.role === 'admin' ? (
+          <View style={styles.adminTabRow}>
+            <TouchableOpacity
+              style={[styles.adminTabBtn, adminView === 'daily' ? styles.adminTabBtnActive : null]}
+              onPress={() => setAdminView('daily')}
+            >
+              <Text style={[styles.adminTabText, adminView === 'daily' ? styles.adminTabTextActive : null]}>Department Daily Activity</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.adminTabBtn, adminView === 'tickets' ? styles.adminTabBtnActive : null]}
+              onPress={() => setAdminView('tickets')}
+            >
+              <Text style={[styles.adminTabText, adminView === 'tickets' ? styles.adminTabTextActive : null]}>Create Ticket</Text>
+            </TouchableOpacity>
+          </View>
+        ) : user ? (
+          <View style={styles.actionRow}>
+            <TouchableOpacity style={[styles.createBtn, styles.actionHalf]} onPress={() => router.push('/create-ticket')}>
+              <Ionicons name="add" size={16} color="#FFFFFF" />
+              <Text style={styles.createBtnText}>Create Ticket</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.dailyTaskBtn, styles.actionHalf]} onPress={() => router.push('/daily-task')}>
+              <Ionicons name="time-outline" size={16} color="#1D391D" />
+              <Text style={styles.dailyTaskBtnText}>Daily Task</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        {user?.role === 'admin' && adminView === 'daily' ? (
+          <View style={styles.adminDailyWrap}>
+            <View style={styles.adminDailyDateBar}>
+              <TouchableOpacity style={styles.adminDailyDateBtn} onPress={() => shiftAdminDailyDate(-1)}>
+                <Text style={styles.adminDailyDateBtnText}>Previous</Text>
+              </TouchableOpacity>
+              <View style={styles.adminDailyDateCenter}>
+                <Text style={styles.adminDailyDateLabel}>Date</Text>
+                <Text style={styles.adminDailyDateValue}>{prettyAdminDailyDate}</Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.adminDailyDateBtn, isAdminDailyNextDisabled ? styles.adminDailyDateBtnDisabled : null]}
+                onPress={() => shiftAdminDailyDate(1)}
+                disabled={isAdminDailyNextDisabled}>
+                <Text style={styles.adminDailyDateBtnText}>Next</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity style={styles.adminDailyTodayBtn} onPress={() => setAdminDailyDate(todayDateKey)}>
+              <Text style={styles.adminDailyTodayText}>Today</Text>
+            </TouchableOpacity>
+
+            {adminDailyTasksLoading ? <Text style={styles.emptyText}>Loading daily activity...</Text> : null}
+            {!adminDailyTasksLoading && adminDailyTasks.length === 0 ? (
+              <Text style={styles.emptyText}>No daily task activity found for {prettyAdminDailyDate}.</Text>
+            ) : null}
+            {adminDailyTasks.map((item) => (
+              <View key={item._id} style={styles.adminDailyCard}>
+                <View style={styles.adminDailyRow}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      const uri = item.endImageUrl || item.startImageUrl || null;
+                      if (uri) setPreviewImageUri(uri);
+                    }}
+                  >
+                    {item.endImageUrl || item.startImageUrl ? (
+                      <Image source={{ uri: item.endImageUrl || item.startImageUrl || '' }} style={styles.adminDailyThumb} />
+                    ) : (
+                      <View style={styles.adminDailyThumbPlaceholder}>
+                        <Text style={styles.adminDailyThumbPlaceholderText}>No Image</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+
+                  <View style={styles.adminDailyInfo}>
+                    <Text style={styles.adminDailyTitle}>{item.taskTitle}</Text>
+                    <Text style={styles.adminDailyMeta}>Employee: {item.employee?.name || '-'}</Text>
+                    <Text style={styles.adminDailyMeta}>Start: {new Date(item.startTime).toLocaleString()}</Text>
+                    <Text style={styles.adminDailyMeta}>End: {item.endTime ? new Date(item.endTime).toLocaleString() : '-'}</Text>
+                  </View>
+
+                  <View style={[styles.adminDailyStatusPill, item.status === 'completed' ? styles.adminDailyStatusDone : styles.adminDailyStatusOpen]}>
+                    <Text style={[styles.adminDailyStatusPillText, item.status === 'completed' ? styles.adminDailyStatusDoneText : styles.adminDailyStatusOpenText]}>
+                      {item.status === 'completed' ? 'Completed' : 'Started'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            ))}
+          </View>
+        ) : null}
+
+        {showTicketList && user?.role === 'admin' ? (
           <TouchableOpacity style={styles.createBtn} onPress={() => router.push('/create-ticket')}>
             <Ionicons name="add" size={16} color="#FFFFFF" />
             <Text style={styles.createBtnText}>Create Ticket</Text>
           </TouchableOpacity>
         ) : null}
-        {isLoading ? <Text style={styles.emptyText}>Loading tickets...</Text> : null}
-        {!isLoading && tickets.length === 0 ? <Text style={styles.emptyText}>No tickets found.</Text> : null}
 
-        {tickets.map((ticket) => {
+        {showTicketList && isLoading ? <Text style={styles.emptyText}>Loading tickets...</Text> : null}
+        {showTicketList && !isLoading && tickets.length === 0 ? <Text style={styles.emptyText}>No tickets found.</Text> : null}
+
+        {showTicketList && tickets.map((ticket) => {
           const status = getStatusMeta(ticket.status);
           const priority = getPriorityMeta(ticket.priority);
           const assigneeName = ticket.assignedTo?.name ?? 'Unassigned';
@@ -492,7 +665,7 @@ export default function HomeScreen() {
           );
         })}
 
-        {openTotalPages > 1 ? (
+        {showTicketList && openTotalPages > 1 ? (
           <View style={styles.paginationRow}>
             <TouchableOpacity
               style={[styles.pageBtn, openPage <= 1 ? styles.pageBtnDisabled : null]}
@@ -514,6 +687,18 @@ export default function HomeScreen() {
           </View>
         ) : null}
       </ScrollView>
+
+      <Modal visible={Boolean(previewImageUri)} transparent animationType="fade" onRequestClose={() => setPreviewImageUri(null)}>
+        <View style={styles.previewOverlay}>
+          <TouchableOpacity style={styles.previewBackdrop} onPress={() => setPreviewImageUri(null)} />
+          <View style={styles.previewCard}>
+            <TouchableOpacity style={styles.previewClose} onPress={() => setPreviewImageUri(null)}>
+              <Ionicons name="close" size={18} color="#0F172A" />
+            </TouchableOpacity>
+            {previewImageUri ? <Image source={{ uri: previewImageUri }} style={styles.previewLargeImage} /> : null}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -905,7 +1090,6 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   createBtn: {
-    marginBottom: 10,
     minHeight: 42,
     borderRadius: 10,
     backgroundColor: '#1D391D',
@@ -918,6 +1102,190 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 14,
+  },
+  actionRow: {
+    marginBottom: 10,
+    flexDirection: 'row',
+    gap: 8,
+  },
+  actionHalf: {
+    flex: 1,
+  },
+  adminTabRow: {
+    marginTop: 6,
+    marginBottom: 12,
+    flexDirection: 'row',
+    gap: 8,
+  },
+  adminTabBtn: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#D8DFD1',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  adminTabBtnActive: {
+    borderColor: '#1D391D',
+    backgroundColor: '#E7ECE1',
+  },
+  adminTabText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  adminTabTextActive: {
+    color: '#1D391D',
+  },
+  dailyTaskBtn: {
+    minHeight: 42,
+    borderRadius: 10,
+    backgroundColor: '#E7ECE1',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#D8DFD1',
+  },
+  dailyTaskBtnText: {
+    color: '#1D391D',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  adminDailyWrap: {
+    marginBottom: 12,
+  },
+  adminDailyDateBar: {
+    marginTop: 4,
+    marginBottom: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  adminDailyDateBtn: {
+    minWidth: 86,
+    minHeight: 36,
+    borderRadius: 10,
+    backgroundColor: '#E7ECE1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  adminDailyDateBtnText: { color: '#1D391D', fontWeight: '700', fontSize: 12 },
+  adminDailyDateBtnDisabled: { opacity: 0.45 },
+  adminDailyDateCenter: { alignItems: 'center' },
+  adminDailyDateLabel: { fontSize: 11, color: '#6B7280' },
+  adminDailyDateValue: { fontSize: 14, fontWeight: '700', color: '#111827' },
+  adminDailyTodayBtn: { alignSelf: 'center', marginBottom: 8 },
+  adminDailyTodayText: { color: '#2563EB', fontSize: 12, fontWeight: '700' },
+  adminDailyCard: {
+    marginBottom: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#D8DFD1',
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+  },
+  adminDailyTop: {
+    display: 'none',
+  },
+  adminDailyRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  adminDailyTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  adminDailyInfo: {
+    flex: 1,
+  },
+  adminDailyMeta: {
+    marginTop: 2,
+    fontSize: 11,
+    lineHeight: 14,
+    color: '#4B5563',
+  },
+  adminDailyStatusPill: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  adminDailyStatusOpen: {
+    backgroundColor: '#FEF3C7',
+  },
+  adminDailyStatusDone: {
+    backgroundColor: '#DCFCE7',
+  },
+  adminDailyStatusPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  adminDailyStatusOpenText: {
+    color: '#B45309',
+  },
+  adminDailyStatusDoneText: {
+    color: '#15803D',
+  },
+  adminDailyThumb: {
+    width: 56,
+    height: 56,
+    borderRadius: 10,
+    backgroundColor: '#E5E7EB',
+  },
+  adminDailyThumbPlaceholder: {
+    width: 56,
+    height: 56,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  adminDailyThumbPlaceholderText: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  previewOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(2,6,23,0.65)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+  },
+  previewBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  previewCard: {
+    width: '100%',
+    maxWidth: 420,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    padding: 12,
+  },
+  previewClose: {
+    alignSelf: 'flex-end',
+    width: 30,
+    height: 30,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E2E8F0',
+    marginBottom: 8,
+  },
+  previewLargeImage: {
+    width: '100%',
+    height: 360,
+    borderRadius: 12,
+    backgroundColor: '#E5E7EB',
   },
   attendanceInlineWrap: {
     alignItems: 'flex-end',

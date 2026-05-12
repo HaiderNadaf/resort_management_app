@@ -63,6 +63,7 @@ export default function RootLayout() {
                 <Stack.Screen name="(auth)" options={{ headerShown: false }} />
                 <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
                 <Stack.Screen name="create-ticket" options={{ title: 'Create Ticket' }} />
+                <Stack.Screen name="daily-task" options={{ title: 'Daily Task' }} />
                 <Stack.Screen name="complete-ticket/[id]" options={{ title: 'Complete Ticket' }} />
                 <Stack.Screen name="reassign-ticket/[id]" options={{ title: 'Reassign Ticket' }} />
                 <Stack.Screen name="room-list/[category]" options={{ title: 'Room List' }} />
