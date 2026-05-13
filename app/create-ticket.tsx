@@ -110,8 +110,8 @@ export default function CreateTicketScreen() {
   };
 
   const submit = async () => {
-    if (!title.trim() || !description.trim()) {
-      setError('Title and description are required.');
+    if (!title.trim()) {
+      setError('Title is required.');
       return;
     }
     if (!imageUri) {
@@ -190,7 +190,7 @@ export default function CreateTicketScreen() {
           value={description}
           onChangeText={setDescription}
           style={[styles.input, styles.textArea]}
-          placeholder="Ticket description"
+          placeholder="Ticket description (optional)"
           multiline
         />
 
