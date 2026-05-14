@@ -4,7 +4,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import { useAuth } from '@/context/auth-context';
 import { apiRequest } from '@/lib/api';
 
-type InspectionStatus = 'pending' | 'in_progress' | 'completed';
+type InspectionStatus = 'pending' | 'in_progress' | 'completed' | 'occupied';
 
 export type RoomInspectionChecklistItem = {
   label: string;
@@ -34,6 +34,9 @@ export type RoomCategoryCard = {
   categoryName: string;
   totalRooms: number;
   completedRooms: number;
+  inProgressRooms?: number;
+  pendingRooms?: number;
+  occupiedRooms?: number;
   progress: string;
   assignedTo?: { _id: string; name: string; role: string; department?: string | null } | null;
 };
@@ -65,6 +68,8 @@ type RoomInspectionContextValue = {
   loadInspection: (id: string) => Promise<RoomInspection | null>;
   saveChecklist: (id: string, checklist: RoomInspectionChecklistItem[], notes?: string, imageUri?: string) => Promise<void>;
   completeRoom: (id: string) => Promise<void>;
+  markRoomOccupied: (id: string) => Promise<void>;
+  clearRoomOccupied: (id: string) => Promise<void>;
   assignCategory: (date: string, categoryKey: string, assignedTo: string) => Promise<AssignCategoryResponse>;
   loadAssignableUsers: () => Promise<Array<{ _id: string; name: string; role: string; department?: string | null }>>;
   getCalendarDays: (month: string) => RoomCalendarDay[];
@@ -216,6 +221,34 @@ export function RoomInspectionProvider({ children }: { children: React.ReactNode
     await runOrQueue({ type: 'complete', id });
   };
 
+  const markRoomOccupied = async (id: string) => {
+    if (!token) throw new Error('Not authenticated');
+    const existing = inspectionById[id];
+    const updated = await apiRequest<RoomInspection>(`/api/room-inspections/${id}/mark-occupied`, {
+      method: 'PATCH',
+      token,
+    });
+    updateInspectionCache(updated);
+    if (existing) {
+      await loadDashboard(existing.inspectionDate);
+      await loadRooms(existing.inspectionDate, existing.categoryKey);
+    }
+  };
+
+  const clearRoomOccupied = async (id: string) => {
+    if (!token) throw new Error('Not authenticated');
+    const existing = inspectionById[id];
+    const updated = await apiRequest<RoomInspection>(`/api/room-inspections/${id}/clear-occupied`, {
+      method: 'PATCH',
+      token,
+    });
+    updateInspectionCache(updated);
+    if (existing) {
+      await loadDashboard(existing.inspectionDate);
+      await loadRooms(existing.inspectionDate, existing.categoryKey);
+    }
+  };
+
   const syncPendingActions = async () => {
     if (!token || pendingActions.length === 0) return;
     const remaining: PendingAction[] = [];
@@ -298,6 +331,8 @@ export function RoomInspectionProvider({ children }: { children: React.ReactNode
       loadInspection,
       saveChecklist,
       completeRoom,
+      markRoomOccupied,
+      clearRoomOccupied,
       assignCategory,
       loadAssignableUsers,
       getCalendarDays: (month) => calendarByMonth[month] ?? [],

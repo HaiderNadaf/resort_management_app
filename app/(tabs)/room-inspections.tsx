@@ -7,8 +7,9 @@ import { useRoomInspections } from '@/context/room-inspection-context';
 
 const DEFAULT_ROOM_CATEGORIES = [
   { categoryKey: 'aqua_room', categoryName: 'Aqua Room', totalRooms: 20 },
-  { categoryKey: 'suite_room', categoryName: 'Suite Room', totalRooms: 6 },
-  { categoryKey: 'heritage_room', categoryName: 'Heritage Room', totalRooms: 18 },
+  { categoryKey: 'suite_room', categoryName: 'Suite Room', totalRooms: 10 },
+  { categoryKey: 'heritage_room', categoryName: 'Heritage Cottage', totalRooms: 18 },
+  { categoryKey: 'campaign_room', categoryName: 'Campaign Room', totalRooms: 12 },
   { categoryKey: 'suite_room_with_pool', categoryName: 'Suite Room with Pool', totalRooms: 4 },
 ] as const;
 

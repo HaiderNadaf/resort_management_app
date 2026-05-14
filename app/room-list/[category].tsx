@@ -26,7 +26,7 @@ export default function RoomListScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate, categoryKey]);
 
-  const completed = rooms.filter((item) => item.status === 'completed').length;
+  const completed = rooms.filter((item) => item.status === 'completed' || item.status === 'occupied').length;
   const progress = rooms.length === 0 ? 0 : (completed / rooms.length) * 100;
 
   return (
@@ -45,20 +45,44 @@ export default function RoomListScreen() {
         {!isLoading && rooms.length === 0 ? <Text style={styles.helper}>No rooms found.</Text> : null}
 
         {rooms.map((room) => {
-          const isDone = room.status === 'completed';
+          const isDone = room.status === 'completed' || room.status === 'occupied';
+          const isOccupied = room.status === 'occupied';
           const isInProgress = room.status === 'in_progress';
           return (
             <TouchableOpacity
               key={room._id}
-              style={[styles.roomCard, isDone ? styles.doneCard : styles.pendingCard]}
+              style={[
+                styles.roomCard,
+                isOccupied ? styles.occupiedCard : isDone ? styles.doneCard : styles.pendingCard,
+              ]}
               onPress={() => router.push(`/room-checklist/${room._id}`)}>
               <View>
                 <Text style={styles.roomTitle}>{room.roomLabel}</Text>
                 <Text style={styles.roomMeta}>Assigned: {room.assignedTo?.name ?? 'Not assigned'}</Text>
               </View>
-              <View style={[styles.statusPill, isDone ? styles.donePill : isInProgress ? styles.inProgressPill : styles.pendingPill]}>
-                <Text style={[styles.statusText, isDone ? styles.doneText : isInProgress ? styles.inProgressText : styles.pendingText]}>
-                  {isDone ? 'Completed' : room.status === 'in_progress' ? 'In Progress' : 'Pending'}
+              <View
+                style={[
+                  styles.statusPill,
+                  isOccupied
+                    ? styles.occupiedPill
+                    : isDone
+                      ? styles.donePill
+                      : isInProgress
+                        ? styles.inProgressPill
+                        : styles.pendingPill,
+                ]}>
+                <Text
+                  style={[
+                    styles.statusText,
+                    isOccupied
+                      ? styles.occupiedText
+                      : isDone
+                        ? styles.doneText
+                        : isInProgress
+                          ? styles.inProgressText
+                          : styles.pendingText,
+                  ]}>
+                  {isOccupied ? 'Occupied' : isDone ? 'Completed' : room.status === 'in_progress' ? 'In Progress' : 'Pending'}
                 </Text>
               </View>
             </TouchableOpacity>
@@ -87,6 +111,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   doneCard: { backgroundColor: '#ECFDF5', borderColor: '#34D399' },
+  occupiedCard: { backgroundColor: '#EEF2FF', borderColor: '#818CF8' },
   pendingCard: { backgroundColor: '#FFFFFF', borderColor: '#E5E7EB' },
   roomTitle: { fontSize: 16, fontWeight: '800', color: '#111827' },
   roomMeta: { marginTop: 3, fontSize: 12, color: '#6B7280', fontWeight: '600' },
@@ -94,8 +119,10 @@ const styles = StyleSheet.create({
   donePill: { backgroundColor: '#DCFCE7' },
   inProgressPill: { backgroundColor: '#FEF3C7' },
   pendingPill: { backgroundColor: '#FEE2E2' },
+  occupiedPill: { backgroundColor: '#E0E7FF' },
   statusText: { fontSize: 12, fontWeight: '700' },
   doneText: { color: '#166534' },
   inProgressText: { color: '#B45309' },
   pendingText: { color: '#991B1B' },
+  occupiedText: { color: '#3730A3' },
 });

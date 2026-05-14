@@ -23,7 +23,8 @@ export default function RoomChecklistScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView | null>(null);
-  const { getInspectionById, loadInspection, saveChecklist, completeRoom, pendingSyncCount } = useRoomInspections();
+  const { getInspectionById, loadInspection, saveChecklist, completeRoom, markRoomOccupied, clearRoomOccupied, pendingSyncCount } =
+    useRoomInspections();
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView | null>(null);
   const [checklist, setChecklist] = useState<RoomInspectionChecklistItem[]>([]);
@@ -62,9 +63,13 @@ export default function RoomChecklistScreen() {
     ? 'Pending'
     : inspection.status === 'completed'
       ? 'Completed'
-      : inspection.status === 'in_progress'
-        ? 'In Progress'
-        : 'Pending';
+      : inspection.status === 'occupied'
+        ? 'Occupied (guest present)'
+        : inspection.status === 'in_progress'
+          ? 'In Progress'
+          : 'Pending';
+
+  const isOccupied = inspection?.status === 'occupied';
 
   const scrollNotesIntoView = () => {
     requestAnimationFrame(() => {
@@ -143,6 +148,33 @@ export default function RoomChecklistScreen() {
     }
   };
 
+  const markOccupied = async () => {
+    if (!id) return;
+    setIsSaving(true);
+    setError('');
+    try {
+      await markRoomOccupied(id);
+      router.back();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to mark room occupied');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const clearOccupied = async () => {
+    if (!id) return;
+    setIsSaving(true);
+    setError('');
+    try {
+      await clearRoomOccupied(id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to clear occupied status');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   if (showCamera) {
     if (!cameraPermission?.granted) {
       return (
@@ -191,9 +223,25 @@ export default function RoomChecklistScreen() {
           Checklist: {checkedCount}/{checklist.length}
         </Text>
 
+        {isOccupied ? (
+          <View style={styles.occupiedBanner}>
+            <Text style={styles.occupiedBannerTitle}>Guest in room</Text>
+            <Text style={styles.occupiedBannerText}>
+              This room is marked occupied so the inspection can be finished later when the room is free.
+            </Text>
+            <TouchableOpacity style={styles.clearOccupiedBtn} onPress={clearOccupied} disabled={isSaving}>
+              <Text style={styles.clearOccupiedBtnText}>{isSaving ? 'Updating...' : 'Guest left — clear occupied'}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
         <View style={styles.listWrap}>
           {checklist.map((item, idx) => (
-            <TouchableOpacity key={`${item.label}-${idx}`} style={styles.itemRow} onPress={() => toggleItem(idx)}>
+            <TouchableOpacity
+              key={`${item.label}-${idx}`}
+              style={[styles.itemRow, isOccupied ? styles.itemRowDisabled : null]}
+              disabled={isOccupied}
+              onPress={() => toggleItem(idx)}>
               <View style={[styles.checkbox, item.isChecked ? styles.checkboxChecked : null]}>
                 {item.isChecked ? <Text style={styles.checkboxTick}>✓</Text> : null}
               </View>
@@ -202,6 +250,12 @@ export default function RoomChecklistScreen() {
           ))}
         </View>
 
+        {!isOccupied && inspection?.status !== 'completed' ? (
+          <TouchableOpacity style={styles.occupiedMarkBtn} onPress={markOccupied} disabled={isSaving}>
+            <Text style={styles.occupiedMarkBtnText}>Room occupied — guest present (skip inspection for now)</Text>
+          </TouchableOpacity>
+        ) : null}
+
         <Text style={styles.notesLabel}>Notes</Text>
         <TextInput
           value={notes}
@@ -209,9 +263,10 @@ export default function RoomChecklistScreen() {
           placeholder="Add issue notes (optional)"
           style={styles.notesInput}
           multiline
+          editable={!isOccupied}
           onFocus={scrollNotesIntoView}
         />
-        <TouchableOpacity style={styles.imageBtn} onPress={pickProgressImage}>
+        <TouchableOpacity style={styles.imageBtn} onPress={pickProgressImage} disabled={isOccupied}>
           <Text style={styles.imageBtnText}>{progressImageUri ? 'Change Image' : 'Upload Image'}</Text>
         </TouchableOpacity>
         {progressImageUri ? <Image source={{ uri: progressImageUri }} style={styles.previewImage} /> : null}
@@ -219,10 +274,13 @@ export default function RoomChecklistScreen() {
         {pendingSyncCount > 0 ? <Text style={styles.info}>Offline queue: {pendingSyncCount} pending updates</Text> : null}
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
-        <TouchableOpacity style={styles.saveBtn} onPress={saveProgress} disabled={isSaving}>
+        <TouchableOpacity style={styles.saveBtn} onPress={saveProgress} disabled={isSaving || isOccupied}>
           <Text style={styles.saveText}>{isSaving ? 'Saving...' : 'Save Progress'}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.saveBtn, !allChecked ? styles.completeBtnDisabled : styles.completeBtn]} onPress={complete} disabled={!allChecked || isSaving}>
+        <TouchableOpacity
+          style={[styles.saveBtn, !allChecked || isOccupied ? styles.completeBtnDisabled : styles.completeBtn]}
+          onPress={complete}
+          disabled={!allChecked || isSaving || isOccupied}>
           <Text style={styles.saveText}>{isSaving ? 'Processing...' : 'Save & Complete Room'}</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -247,6 +305,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   itemRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 40 },
+  itemRowDisabled: { opacity: 0.55 },
   checkbox: {
     width: 24,
     height: 24,
@@ -331,5 +390,37 @@ const styles = StyleSheet.create({
   },
   completeBtn: { backgroundColor: '#16A34A' },
   completeBtnDisabled: { backgroundColor: '#9CA3AF' },
+  occupiedBanner: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    gap: 8,
+  },
+  occupiedBannerTitle: { fontSize: 15, fontWeight: '800', color: '#312E81' },
+  occupiedBannerText: { fontSize: 13, color: '#4338CA', fontWeight: '600', lineHeight: 18 },
+  clearOccupiedBtn: {
+    marginTop: 4,
+    minHeight: 44,
+    borderRadius: 10,
+    backgroundColor: '#4F46E5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  clearOccupiedBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 14 },
+  occupiedMarkBtn: {
+    marginTop: 12,
+    minHeight: 48,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#6366F1',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  occupiedMarkBtnText: { color: '#4338CA', fontWeight: '700', fontSize: 13, textAlign: 'center' },
   saveText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
 });
