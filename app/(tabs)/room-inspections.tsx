@@ -4,6 +4,7 @@ import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-nati
 
 import { useAuth } from '@/context/auth-context';
 import { useRoomInspections } from '@/context/room-inspection-context';
+import { prettyDateKey, shiftDateKey, todayDateKey } from '@/lib/date-key';
 
 const DEFAULT_ROOM_CATEGORIES = [
   { categoryKey: 'aqua_room', categoryName: 'Aqua Room', totalRooms: 20 },
@@ -12,23 +13,6 @@ const DEFAULT_ROOM_CATEGORIES = [
   { categoryKey: 'campaign_room', categoryName: 'Campaign Room', totalRooms: 12 },
   { categoryKey: 'suite_room_with_pool', categoryName: 'Suite Room with Pool', totalRooms: 4 },
 ] as const;
-
-function dateKeyFromDate(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function dateFromDateKey(dateKey: string) {
-  const [year, month, day] = dateKey.split('-').map((value) => Number(value));
-  return new Date(year, month - 1, day);
-}
-
-function prettyDate(dateKey: string) {
-  const date = dateFromDateKey(dateKey);
-  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-}
 
 export default function RoomInspectionsTab() {
   const router = useRouter();
@@ -42,7 +26,7 @@ export default function RoomInspectionsTab() {
     loadAssignableUsers,
     syncPendingActions,
   } = useRoomInspections();
-  const [selectedDate, setSelectedDate] = useState(dateKeyFromDate(new Date()));
+  const [selectedDate, setSelectedDate] = useState(todayDateKey());
   const [assignableUsers, setAssignableUsers] = useState<{ _id: string; name: string; role: string; department?: string | null }[]>(
     []
   );
@@ -95,13 +79,11 @@ export default function RoomInspectionsTab() {
     const done = categories.reduce((sum, item) => sum + item.completedRooms, 0);
     return `${done}/${total}`;
   }, [categories]);
-  const todayDateKey = dateKeyFromDate(new Date());
-  const isNextDisabled = selectedDate >= todayDateKey;
+  const resortTodayKey = todayDateKey();
+  const isNextDisabled = selectedDate >= resortTodayKey;
 
   const shiftDate = (days: number) => {
-    const base = dateFromDateKey(selectedDate);
-    base.setDate(base.getDate() + days);
-    setSelectedDate(dateKeyFromDate(base));
+    setSelectedDate((prev) => shiftDateKey(prev || resortTodayKey, days));
   };
 
   return (
@@ -116,7 +98,7 @@ export default function RoomInspectionsTab() {
           </TouchableOpacity>
           <View style={styles.dateCenter}>
             <Text style={styles.dateLabel}>Date</Text>
-            <Text style={styles.dateValue}>{prettyDate(selectedDate)}</Text>
+            <Text style={styles.dateValue}>{prettyDateKey(selectedDate)}</Text>
           </View>
           <TouchableOpacity
             style={[styles.dateBtn, isNextDisabled ? styles.dateBtnDisabled : null]}
@@ -125,7 +107,7 @@ export default function RoomInspectionsTab() {
             <Text style={styles.dateBtnText}>Next</Text>
           </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.todayBtn} onPress={() => setSelectedDate(dateKeyFromDate(new Date()))}>
+        <TouchableOpacity style={styles.todayBtn} onPress={() => setSelectedDate(resortTodayKey)}>
           <Text style={styles.todayText}>Today</Text>
         </TouchableOpacity>
 

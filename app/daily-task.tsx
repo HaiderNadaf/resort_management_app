@@ -4,6 +4,7 @@ import { Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View 
 
 import { useAuth } from '@/context/auth-context';
 import { apiRequest } from '@/lib/api';
+import { prettyDateKey, shiftDateKey, todayDateKey } from '@/lib/date-key';
 
 type DailyTask = {
   _id: string;
@@ -20,23 +21,6 @@ type DailyTask = {
   } | null;
 };
 
-function dateKeyFromDate(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function dateFromDateKey(dateKey: string) {
-  const [year, month, day] = dateKey.split('-').map((value) => Number(value));
-  return new Date(year, month - 1, day);
-}
-
-function prettyDate(dateKey: string) {
-  const date = dateFromDateKey(dateKey);
-  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-}
-
 export default function DailyTaskScreen() {
   const { token, user } = useAuth();
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
@@ -51,10 +35,10 @@ export default function DailyTaskScreen() {
   const [error, setError] = useState('');
   const isDepartmentAdmin = user?.role === 'admin' && !user?.isMainAdmin;
 
-  const todayDateKey = dateKeyFromDate(new Date());
-  const [selectedDate, setSelectedDate] = useState(todayDateKey);
-  const isToday = selectedDate === todayDateKey;
-  const isNextDisabled = selectedDate >= todayDateKey;
+  const resortTodayKey = todayDateKey();
+  const [selectedDate, setSelectedDate] = useState(resortTodayKey);
+  const isToday = selectedDate === resortTodayKey;
+  const isNextDisabled = selectedDate >= resortTodayKey;
 
   const loadTasks = async (dateKey: string) => {
     if (!token) return;
@@ -65,7 +49,7 @@ export default function DailyTaskScreen() {
         : `/api/daily-tasks/my-today?date=${encodeURIComponent(dateKey)}`;
       const data = await apiRequest<{ tasks: DailyTask[] }>(path, { token });
       setTasks(data.tasks || []);
-      if (isDepartmentAdmin || dateKey !== todayDateKey) {
+      if (isDepartmentAdmin || dateKey !== resortTodayKey) {
         setActiveTaskId('');
       } else {
         const started = (data.tasks || []).find((task) => task.status === 'started');
@@ -85,9 +69,7 @@ export default function DailyTaskScreen() {
   }, [token, isDepartmentAdmin, selectedDate]);
 
   const shiftDate = (days: number) => {
-    const base = dateFromDateKey(selectedDate);
-    base.setDate(base.getDate() + days);
-    setSelectedDate(dateKeyFromDate(base));
+    setSelectedDate((prev) => shiftDateKey(prev || resortTodayKey, days));
   };
 
   const openCamera = async () => {
@@ -210,7 +192,7 @@ export default function DailyTaskScreen() {
           </TouchableOpacity>
           <View style={styles.dateCenter}>
             <Text style={styles.dateLabel}>Date</Text>
-            <Text style={styles.dateValue}>{prettyDate(selectedDate)}</Text>
+            <Text style={styles.dateValue}>{prettyDateKey(selectedDate)}</Text>
           </View>
           <TouchableOpacity
             style={[styles.dateBtn, isNextDisabled ? styles.dateBtnDisabled : null]}
@@ -219,7 +201,7 @@ export default function DailyTaskScreen() {
             <Text style={styles.dateBtnText}>Next</Text>
           </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.todayBtn} onPress={() => setSelectedDate(todayDateKey)}>
+        <TouchableOpacity style={styles.todayBtn} onPress={() => setSelectedDate(resortTodayKey)}>
           <Text style={styles.todayText}>Today</Text>
         </TouchableOpacity>
 
@@ -253,9 +235,9 @@ export default function DailyTaskScreen() {
         ) : null}
 
         {isDepartmentAdmin ? (
-          <Text style={styles.helper}>Showing activity for your department users on {prettyDate(selectedDate)}.</Text>
+          <Text style={styles.helper}>Showing activity for your department users on {prettyDateKey(selectedDate)}.</Text>
         ) : !isToday ? (
-          <Text style={styles.helper}>Viewing history for {prettyDate(selectedDate)}. Switch back to Today to start a new task.</Text>
+          <Text style={styles.helper}>Viewing history for {prettyDateKey(selectedDate)}. Switch back to Today to start a new task.</Text>
         ) : null}
 
         <Text style={styles.listTitle}>{isToday ? 'Today Activity' : 'Activity'}</Text>
@@ -270,7 +252,7 @@ export default function DailyTaskScreen() {
           </View>
         ))}
         {!loading && tasks.length === 0 ? (
-          <Text style={styles.helper}>No tasks logged on {prettyDate(selectedDate)}.</Text>
+          <Text style={styles.helper}>No tasks logged on {prettyDateKey(selectedDate)}.</Text>
         ) : null}
         {error ? <Text style={styles.error}>{error}</Text> : null}
       </ScrollView>

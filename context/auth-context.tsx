@@ -3,6 +3,7 @@ import Constants from 'expo-constants';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 import { apiRequest } from '@/lib/api';
+import { stopShiftTracking } from '@/lib/location-tracking';
 
 type UserRole = 'admin' | 'employee';
 
@@ -270,6 +271,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       },
       signOut: async () => {
+        await stopShiftTracking().catch(() => {});
         await clearAuth();
       },
       refreshUser: async () => {

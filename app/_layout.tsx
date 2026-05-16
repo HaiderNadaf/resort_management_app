@@ -1,3 +1,5 @@
+import '@/lib/background-location-task';
+
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -8,6 +10,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import 'react-native-reanimated';
 
 import { GlobalApiLoader } from '@/components/global-api-loader';
+import { ShiftTrackingRecovery } from '@/components/shift-tracking-recovery';
 import { TicketPushNotificationHandler } from '@/components/ticket-push-notification-handler';
 import { AuthProvider } from '@/context/auth-context';
 import { RoomInspectionProvider } from '@/context/room-inspection-context';
@@ -37,6 +40,15 @@ export default function RootLayout() {
         name: 'default',
         importance: Notifications.AndroidImportance.MAX,
       });
+      await Notifications.setNotificationChannelAsync('location-tracking', {
+        name: 'Shift location tracking',
+        description: 'Shows while your location is tracked during a checked-in shift',
+        importance: Notifications.AndroidImportance.HIGH,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        bypassDnd: false,
+        enableVibrate: false,
+        showBadge: false,
+      });
       Notifications.setNotificationHandler({
         handleNotification: async () => ({
           shouldShowBanner: true,
@@ -56,6 +68,7 @@ export default function RootLayout() {
       <AuthProvider>
         <TicketProvider>
           <TicketPushNotificationHandler />
+          <ShiftTrackingRecovery />
           <RoomInspectionProvider>
             <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
               <Stack>

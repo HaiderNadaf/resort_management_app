@@ -3,21 +3,30 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useNetInfo } from '@react-native-community/netinfo';
 import * as Location from 'expo-location';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, Modal, PanResponder, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Image, Modal, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BrandColors } from '@/constants/brand';
 import { useAuth } from '@/context/auth-context';
 import { useTickets } from '@/context/ticket-context';
 import { apiRequest } from '@/lib/api';
+import { prettyDateKey, shiftDateKey, todayDateKey } from '@/lib/date-key';
+import { resumeShiftTrackingIfNeeded, startShiftTracking, stopShiftTracking } from '@/lib/location-tracking';
 
 type AttendanceType = 'check-in' | 'check-out';
 type AttendanceSnapshot = {
+  dateKey?: string;
+  serverTodayKey?: string;
   checkedIn: boolean;
   checkedOut: boolean;
-  checkIn?: { capturedAt?: string } | null;
-  checkOut?: { capturedAt?: string } | null;
+  checkIn?: { capturedAt?: string; capturedAtLabel?: string } | null;
+  checkOut?: { capturedAt?: string; capturedAtLabel?: string } | null;
+};
+type TeamAttendanceResponse = {
+  dateKey: string;
+  serverTodayKey: string;
+  attendance: TeamAttendanceRow[];
 };
 type PendingAttendanceAction = {
   type: AttendanceType;
@@ -35,15 +44,37 @@ type AdminDailyTaskItem = {
   endImageUrl?: string | null;
   employee?: { name?: string | null } | null;
 };
+type TeamAttendanceRow = {
+  _id: string;
+  dateKey: string;
+  user: {
+    _id: string;
+    name: string;
+    phone?: string;
+    department?: string;
+    role?: string;
+  } | null;
+  checkIn: { capturedAt?: string; capturedAtLabel?: string } | null;
+  checkOut: { capturedAt?: string; capturedAtLabel?: string } | null;
+};
+type AdminHomeView = 'daily' | 'tickets' | 'attendance';
+
+function getTeamAttendanceStatus(row: TeamAttendanceRow) {
+  const inAt = row.checkIn?.capturedAt ? new Date(row.checkIn.capturedAt).getTime() : 0;
+  const outAt = row.checkOut?.capturedAt ? new Date(row.checkOut.capturedAt).getTime() : 0;
+  if (!inAt) {
+    return { label: 'Not marked', tone: 'pending' as const };
+  }
+  if (!outAt || outAt <= inAt) {
+    return { label: 'On shift', tone: 'in' as const };
+  }
+  return { label: 'Checked out', tone: 'done' as const };
+}
 
 const ATTENDANCE_QUEUE_KEY = 'attendance_pending_queue';
 const ATTENDANCE_CACHE_KEY = 'attendance_today_cache';
 
 export default function HomeScreen() {
-  const SWIPE_TRACK_WIDTH = 188;
-  const SWIPE_MAX_X = (SWIPE_TRACK_WIDTH - 6) / 2;
-  const SWIPE_CENTER_X = SWIPE_MAX_X / 2;
-  const SWIPE_TRIGGER_GAP = 20;
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user, token } = useAuth();
@@ -72,53 +103,43 @@ export default function HomeScreen() {
   const [pendingAttendanceActions, setPendingAttendanceActions] = useState<PendingAttendanceAction[]>([]);
   const [adminDailyTasks, setAdminDailyTasks] = useState<AdminDailyTaskItem[]>([]);
   const [adminDailyTasksLoading, setAdminDailyTasksLoading] = useState(false);
-  const [adminView, setAdminView] = useState<'daily' | 'tickets'>('daily');
+  const [adminView, setAdminView] = useState<AdminHomeView>('daily');
   const [adminDailyDate, setAdminDailyDate] = useState<string>('');
+  const [teamAttendance, setTeamAttendance] = useState<TeamAttendanceRow[]>([]);
+  const [teamAttendanceLoading, setTeamAttendanceLoading] = useState(false);
+  const [teamAttendanceError, setTeamAttendanceError] = useState('');
+  const [serverTodayKey, setServerTodayKey] = useState('');
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
   const pendingCount = ticketSummary?.pendingCount ?? 0;
   const activeCount = ticketSummary?.inProgressCount ?? 0;
   const totalInScope = ticketSummary?.listScopeTotal ?? 0;
-  const attendanceStatusLabel = useMemo(() => {
+  const isOnShift = useMemo(() => {
     const inAt = attendance?.checkIn?.capturedAt ? new Date(attendance.checkIn.capturedAt).getTime() : 0;
     const outAt = attendance?.checkOut?.capturedAt ? new Date(attendance.checkOut.capturedAt).getTime() : 0;
-    if (!inAt && !outAt) return 'Not Marked';
-    return outAt > inAt ? 'Checked Out' : 'Checked In';
+    return inAt > 0 && (!outAt || outAt <= inAt);
   }, [attendance]);
-  const todayDateKey = useMemo(() => {
-    const date = new Date();
-    const year = date.getFullYear();
-    const month = `${date.getMonth() + 1}`.padStart(2, '0');
-    const day = `${date.getDate()}`.padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }, []);
+
+  const resortTodayKey = serverTodayKey || todayDateKey();
 
   useEffect(() => {
-    if (!adminDailyDate) setAdminDailyDate(todayDateKey);
-  }, [todayDateKey, adminDailyDate]);
+    if (!adminDailyDate) setAdminDailyDate(resortTodayKey);
+  }, [resortTodayKey, adminDailyDate]);
 
-  const shiftAdminDailyDate = useCallback((days: number) => {
-    setAdminDailyDate((prev) => {
-      const current = prev || todayDateKey;
-      const [year, month, day] = current.split('-').map((value) => Number(value));
-      const base = new Date(year, (month || 1) - 1, day || 1);
-      base.setDate(base.getDate() + days);
-      const ny = base.getFullYear();
-      const nm = `${base.getMonth() + 1}`.padStart(2, '0');
-      const nd = `${base.getDate()}`.padStart(2, '0');
-      return `${ny}-${nm}-${nd}`;
-    });
-  }, [todayDateKey]);
+  const shiftAdminDailyDate = useCallback(
+    (days: number) => {
+      setAdminDailyDate((prev) => shiftDateKey(prev || resortTodayKey, days));
+    },
+    [resortTodayKey]
+  );
 
-  const prettyAdminDailyDate = useMemo(() => {
-    const key = adminDailyDate || todayDateKey;
-    const [year, month, day] = key.split('-').map((value) => Number(value));
-    const date = new Date(year, (month || 1) - 1, day || 1);
-    return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-  }, [adminDailyDate, todayDateKey]);
+  const prettyAdminDailyDate = useMemo(
+    () => prettyDateKey(adminDailyDate || resortTodayKey),
+    [adminDailyDate, resortTodayKey]
+  );
 
-  const isAdminDailyNextDisabled = (adminDailyDate || todayDateKey) >= todayDateKey;
+  const isAdminDailyNextDisabled = (adminDailyDate || resortTodayKey) >= resortTodayKey;
+  const isDepartmentAdmin = user?.role === 'admin' && !user?.isMainAdmin;
   const showTicketList = user?.role !== 'admin' || adminView === 'tickets';
-  const swipeX = useRef(new Animated.Value(0)).current;
 
   const persistPendingAttendanceActions = useCallback(async (items: PendingAttendanceAction[]) => {
     setPendingAttendanceActions(items);
@@ -171,15 +192,14 @@ export default function HomeScreen() {
       const refreshed = await apiRequest<AttendanceSnapshot>('/api/attendance/today', { token });
       setAttendance(refreshed);
       await AsyncStorage.setItem(ATTENDANCE_CACHE_KEY, JSON.stringify(refreshed));
+      if (user?.role === 'employee') {
+        await resumeShiftTrackingIfNeeded(token, refreshed).catch(() => {});
+      }
       setAttendanceError('');
     } else {
       setAttendanceError('Some attendance actions are pending sync.');
     }
-  }, [token, pendingAttendanceActions, isOffline, persistPendingAttendanceActions]);
-
-  useEffect(() => {
-    swipeX.setValue(SWIPE_CENTER_X);
-  }, [swipeX, SWIPE_CENTER_X]);
+  }, [token, pendingAttendanceActions, isOffline, persistPendingAttendanceActions, user?.role]);
 
   useEffect(() => {
     const hydrateAttendanceState = async () => {
@@ -195,15 +215,6 @@ export default function HomeScreen() {
     };
     hydrateAttendanceState().catch(() => {});
   }, []);
-
-  const animateThumbTo = useCallback((value: number) => {
-    Animated.spring(swipeX, {
-      toValue: value,
-      useNativeDriver: false,
-      friction: 7,
-      tension: 90,
-    }).start();
-  }, [swipeX]);
 
   const captureAndSubmitAttendance = useCallback(async (type: AttendanceType) => {
     if (!token) return;
@@ -243,6 +254,18 @@ export default function HomeScreen() {
       const refreshed = await apiRequest<AttendanceSnapshot>('/api/attendance/today', { token });
       setAttendance(refreshed);
       await AsyncStorage.setItem(ATTENDANCE_CACHE_KEY, JSON.stringify(refreshed));
+
+      if (user?.role === 'employee') {
+        if (type === 'check-in') {
+          await startShiftTracking(token).catch(() => {
+            setAttendanceError((prev) =>
+              prev ? prev : 'Checked in, but shift location tracking could not start. Allow location access.'
+            );
+          });
+        } else {
+          await stopShiftTracking();
+        }
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Failed to update attendance';
       if (/network request failed|failed to fetch|network error|internet/i.test(message)) {
@@ -266,36 +289,15 @@ export default function HomeScreen() {
       }
     } finally {
       setAttendanceLoading(false);
-      animateThumbTo(SWIPE_CENTER_X);
     }
-  }, [token, isOffline, queueAttendanceAction, animateThumbTo, SWIPE_CENTER_X]);
+  }, [token, isOffline, queueAttendanceAction, user?.role]);
 
-  const attendancePanResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
-        onPanResponderMove: (_, gestureState) => {
-          if (attendanceLoading) return;
-          const next = Math.max(0, Math.min(SWIPE_MAX_X, SWIPE_CENTER_X + gestureState.dx));
-          swipeX.setValue(next);
-        },
-        onPanResponderRelease: () => {
-          if (attendanceLoading) return;
-          swipeX.stopAnimation((currentX) => {
-            if (currentX >= SWIPE_CENTER_X + SWIPE_TRIGGER_GAP) {
-              animateThumbTo(SWIPE_MAX_X);
-              captureAndSubmitAttendance('check-in');
-            } else if (currentX <= SWIPE_CENTER_X - SWIPE_TRIGGER_GAP) {
-              animateThumbTo(0);
-              captureAndSubmitAttendance('check-out');
-            } else {
-              animateThumbTo(SWIPE_CENTER_X);
-            }
-          });
-        },
-      }),
-    [attendanceLoading, swipeX, SWIPE_CENTER_X, SWIPE_MAX_X, SWIPE_TRIGGER_GAP, animateThumbTo, captureAndSubmitAttendance]
+  const handleAttendanceToggle = useCallback(
+    (turnOn: boolean) => {
+      if (attendanceLoading) return;
+      void captureAndSubmitAttendance(turnOn ? 'check-in' : 'check-out');
+    },
+    [attendanceLoading, captureAndSubmitAttendance]
   );
 
   useEffect(() => {
@@ -303,11 +305,19 @@ export default function HomeScreen() {
     if (isOffline) return;
     apiRequest<AttendanceSnapshot>('/api/attendance/today', { token })
       .then(async (result) => {
+        const todayKey = result.serverTodayKey || result.dateKey;
+        if (todayKey) {
+          setServerTodayKey(todayKey);
+          setAdminDailyDate((prev) => prev || todayKey);
+        }
         setAttendance(result);
         await AsyncStorage.setItem(ATTENDANCE_CACHE_KEY, JSON.stringify(result));
+        if (user?.role === 'employee') {
+          await resumeShiftTrackingIfNeeded(token, result).catch(() => {});
+        }
       })
       .catch((e) => setAttendanceError(e instanceof Error ? e.message : 'Failed to load attendance status'));
-  }, [token, isOffline]);
+  }, [token, isOffline, user?.role]);
 
   useEffect(() => {
     if (!token || isOffline || pendingAttendanceActions.length === 0) return;
@@ -320,7 +330,7 @@ export default function HomeScreen() {
         setAdminDailyTasks([]);
         return;
       }
-      const dateKey = adminDailyDate || todayDateKey;
+      const dateKey = adminDailyDate || resortTodayKey;
       setAdminDailyTasksLoading(true);
       try {
         const response = await apiRequest<{ tasks: AdminDailyTaskItem[] }>(
@@ -335,7 +345,38 @@ export default function HomeScreen() {
       }
     };
     loadAdminDailyTasks().catch(() => {});
-  }, [token, user?.role, todayDateKey, adminDailyDate]);
+  }, [token, user?.role, resortTodayKey, adminDailyDate]);
+
+  useEffect(() => {
+    const loadTeamAttendance = async () => {
+      if (!token || !isDepartmentAdmin || adminView !== 'attendance') {
+        setTeamAttendance([]);
+        return;
+      }
+      const dateKey = adminDailyDate || resortTodayKey;
+      setTeamAttendanceLoading(true);
+      setTeamAttendanceError('');
+      try {
+        const response = await apiRequest<TeamAttendanceResponse>(
+          `/api/attendance?date=${encodeURIComponent(dateKey)}`,
+          { token }
+        );
+        if (response.serverTodayKey) {
+          setServerTodayKey(response.serverTodayKey);
+        }
+        const rows = (response.attendance || [])
+          .filter((row) => Boolean(row.checkIn))
+          .sort((a, b) => (a.user?.name || '').localeCompare(b.user?.name || ''));
+        setTeamAttendance(rows);
+      } catch (e) {
+        setTeamAttendance([]);
+        setTeamAttendanceError(e instanceof Error ? e.message : 'Failed to load team attendance');
+      } finally {
+        setTeamAttendanceLoading(false);
+      }
+    };
+    loadTeamAttendance().catch(() => {});
+  }, [token, isDepartmentAdmin, adminView, resortTodayKey, adminDailyDate]);
 
   return (
     <View style={styles.page}>
@@ -365,14 +406,14 @@ export default function HomeScreen() {
                 <View
                   style={[
                     styles.profileAttendanceDot,
-                    attendance?.checkedOut
-                      ? styles.profileAttendanceDotDone
-                      : attendance?.checkedIn
+                    isOnShift
                       ? styles.profileAttendanceDotIn
+                      : attendance?.checkIn
+                      ? styles.profileAttendanceDotDone
                       : styles.profileAttendanceDotPending,
                   ]}
                 />
-                <Text style={styles.profileAttendanceText}>{attendanceStatusLabel}</Text>
+                <Text style={styles.profileAttendanceText}>{isOnShift ? 'On shift' : 'Off'}</Text>
               </View>
             </View>
            
@@ -386,47 +427,34 @@ export default function HomeScreen() {
         <View style={styles.titleRow}>
           <Text style={styles.title}>All Tickets</Text>
           {user ? (
-            <View style={styles.attendanceInlineWrap}>
-              <View style={styles.swipeTrack}>
-                <Animated.View
-                  {...attendancePanResponder.panHandlers}
-                  style={[
-                    styles.swipeThumb,
-                    {
-                      transform: [{ translateX: swipeX }],
-                      backgroundColor: '#334155',
-                    },
-                  ]}>
-                  <Ionicons name="swap-horizontal-outline" size={16} color="#FFFFFF" />
-                </Animated.View>
-                <View pointerEvents="none" style={styles.swipeSegmentRow}>
-                  <View style={styles.swipeSegment}>
-                    <Text style={styles.swipeSegmentText}>Check In</Text>
-                  </View>
-                  <View style={styles.swipeSegment}>
-                    <Text style={styles.swipeSegmentText}>Check Out</Text>
-                  </View>
-                </View>
-              </View>
-              <View style={styles.attendanceStatusRow}>
-                <View
-                  style={[
-                    styles.attendanceStatusDot,
-                    attendance?.checkedOut
-                      ? styles.attendanceStatusDotDone
-                      : attendance?.checkedIn
-                      ? styles.attendanceStatusDotIn
-                      : styles.attendanceStatusDotPending,
-                  ]}
-                />
-                <Text style={styles.attendanceInlineStatus}>
-                  {attendanceLoading
-                    ? 'Updating...'
-                    : pendingAttendanceActions.length > 0
-                    ? `${attendanceStatusLabel} (${pendingAttendanceActions.length} pending sync)`
-                    : `${attendanceStatusLabel} (swipe both ways)`}
-                </Text>
-              </View>
+            <View
+              style={[
+                styles.attendanceInlineWrap,
+                isOnShift ? styles.attendanceInlineWrapOn : styles.attendanceInlineWrapOff,
+                attendanceLoading ? styles.attendanceInlineWrapLoading : null,
+              ]}>
+              <View
+                style={[
+                  styles.attendanceInlineDot,
+                  isOnShift ? styles.attendanceInlineDotOn : styles.attendanceInlineDotOff,
+                ]}
+              />
+              <Text
+                style={[
+                  styles.attendanceInlineLabel,
+                  isOnShift ? styles.attendanceInlineLabelOn : styles.attendanceInlineLabelOff,
+                ]}>
+                {attendanceLoading ? '...' : isOnShift ? 'On' : 'Off'}
+              </Text>
+              <Switch
+                value={isOnShift}
+                onValueChange={handleAttendanceToggle}
+                disabled={attendanceLoading}
+                trackColor={{ false: '#CBD5E1', true: '#4ADE80' }}
+                thumbColor={isOnShift ? '#15803D' : '#FFFFFF'}
+                ios_backgroundColor="#E2E8F0"
+                style={styles.attendanceSwitch}
+              />
             </View>
           ) : null}
         </View>
@@ -458,10 +486,18 @@ export default function HomeScreen() {
 
         {user?.role === 'admin' ? (
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>{adminView === 'daily' ? 'Department Daily Activity' : 'Open tickets'}</Text>
+            <Text style={styles.sectionTitle}>
+              {adminView === 'daily'
+                ? 'Department Daily Activity'
+                : adminView === 'attendance'
+                ? 'Team Attendance'
+                : 'Open tickets'}
+            </Text>
             <Text style={styles.sectionCount}>
               {adminView === 'daily'
                 ? `${adminDailyTasks.length} records`
+                : adminView === 'attendance'
+                ? `${teamAttendance.length} employees`
                 : `${openTotalCount} open · page ${openPage} of ${openTotalPages}`}
             </Text>
           </View>
@@ -484,13 +520,25 @@ export default function HomeScreen() {
         ) : null}
 
         {user?.role === 'admin' ? (
-          <View style={styles.adminTabRow}>
+          <View style={[styles.adminTabRow, isDepartmentAdmin ? styles.adminTabRowCompact : null]}>
             <TouchableOpacity
               style={[styles.adminTabBtn, adminView === 'daily' ? styles.adminTabBtnActive : null]}
               onPress={() => setAdminView('daily')}
             >
-              <Text style={[styles.adminTabText, adminView === 'daily' ? styles.adminTabTextActive : null]}>Department Daily Activity</Text>
+              <Text style={[styles.adminTabText, adminView === 'daily' ? styles.adminTabTextActive : null]}>
+                {isDepartmentAdmin ? 'Daily Activity' : 'Department Daily Activity'}
+              </Text>
             </TouchableOpacity>
+            {isDepartmentAdmin ? (
+              <TouchableOpacity
+                style={[styles.adminTabBtn, adminView === 'attendance' ? styles.adminTabBtnActive : null]}
+                onPress={() => setAdminView('attendance')}
+              >
+                <Text style={[styles.adminTabText, adminView === 'attendance' ? styles.adminTabTextActive : null]}>
+                  Attendance
+                </Text>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity
               style={[styles.adminTabBtn, adminView === 'tickets' ? styles.adminTabBtnActive : null]}
               onPress={() => setAdminView('tickets')}
@@ -511,7 +559,7 @@ export default function HomeScreen() {
           </View>
         ) : null}
 
-        {user?.role === 'admin' && adminView === 'daily' ? (
+        {user?.role === 'admin' && (adminView === 'daily' || adminView === 'attendance') ? (
           <View style={styles.adminDailyWrap}>
             <View style={styles.adminDailyDateBar}>
               <TouchableOpacity style={styles.adminDailyDateBtn} onPress={() => shiftAdminDailyDate(-1)}>
@@ -528,47 +576,100 @@ export default function HomeScreen() {
                 <Text style={styles.adminDailyDateBtnText}>Next</Text>
               </TouchableOpacity>
             </View>
-            <TouchableOpacity style={styles.adminDailyTodayBtn} onPress={() => setAdminDailyDate(todayDateKey)}>
+            <TouchableOpacity style={styles.adminDailyTodayBtn} onPress={() => setAdminDailyDate(resortTodayKey)}>
               <Text style={styles.adminDailyTodayText}>Today</Text>
             </TouchableOpacity>
 
-            {adminDailyTasksLoading ? <Text style={styles.emptyText}>Loading daily activity...</Text> : null}
-            {!adminDailyTasksLoading && adminDailyTasks.length === 0 ? (
-              <Text style={styles.emptyText}>No daily task activity found for {prettyAdminDailyDate}.</Text>
-            ) : null}
-            {adminDailyTasks.map((item) => (
-              <View key={item._id} style={styles.adminDailyCard}>
-                <View style={styles.adminDailyRow}>
-                  <TouchableOpacity
-                    onPress={() => {
-                      const uri = item.endImageUrl || item.startImageUrl || null;
-                      if (uri) setPreviewImageUri(uri);
-                    }}
-                  >
-                    {item.endImageUrl || item.startImageUrl ? (
-                      <Image source={{ uri: item.endImageUrl || item.startImageUrl || '' }} style={styles.adminDailyThumb} />
-                    ) : (
-                      <View style={styles.adminDailyThumbPlaceholder}>
-                        <Text style={styles.adminDailyThumbPlaceholderText}>No Image</Text>
+            {adminView === 'daily' ? (
+              <>
+                {adminDailyTasksLoading ? <Text style={styles.emptyText}>Loading daily activity...</Text> : null}
+                {!adminDailyTasksLoading && adminDailyTasks.length === 0 ? (
+                  <Text style={styles.emptyText}>No daily task activity found for {prettyAdminDailyDate}.</Text>
+                ) : null}
+                {adminDailyTasks.map((item) => (
+                  <View key={item._id} style={styles.adminDailyCard}>
+                    <View style={styles.adminDailyRow}>
+                      <TouchableOpacity
+                        onPress={() => {
+                          const uri = item.endImageUrl || item.startImageUrl || null;
+                          if (uri) setPreviewImageUri(uri);
+                        }}
+                      >
+                        {item.endImageUrl || item.startImageUrl ? (
+                          <Image source={{ uri: item.endImageUrl || item.startImageUrl || '' }} style={styles.adminDailyThumb} />
+                        ) : (
+                          <View style={styles.adminDailyThumbPlaceholder}>
+                            <Text style={styles.adminDailyThumbPlaceholderText}>No Image</Text>
+                          </View>
+                        )}
+                      </TouchableOpacity>
+
+                      <View style={styles.adminDailyInfo}>
+                        <Text style={styles.adminDailyTitle}>{item.taskTitle}</Text>
+                        <Text style={styles.adminDailyMeta}>Employee: {item.employee?.name || '-'}</Text>
+                        <Text style={styles.adminDailyMeta}>Start: {new Date(item.startTime).toLocaleString()}</Text>
+                        <Text style={styles.adminDailyMeta}>End: {item.endTime ? new Date(item.endTime).toLocaleString() : '-'}</Text>
                       </View>
-                    )}
-                  </TouchableOpacity>
 
-                  <View style={styles.adminDailyInfo}>
-                    <Text style={styles.adminDailyTitle}>{item.taskTitle}</Text>
-                    <Text style={styles.adminDailyMeta}>Employee: {item.employee?.name || '-'}</Text>
-                    <Text style={styles.adminDailyMeta}>Start: {new Date(item.startTime).toLocaleString()}</Text>
-                    <Text style={styles.adminDailyMeta}>End: {item.endTime ? new Date(item.endTime).toLocaleString() : '-'}</Text>
+                      <View style={[styles.adminDailyStatusPill, item.status === 'completed' ? styles.adminDailyStatusDone : styles.adminDailyStatusOpen]}>
+                        <Text style={[styles.adminDailyStatusPillText, item.status === 'completed' ? styles.adminDailyStatusDoneText : styles.adminDailyStatusOpenText]}>
+                          {item.status === 'completed' ? 'Completed' : 'Started'}
+                        </Text>
+                      </View>
+                    </View>
                   </View>
+                ))}
+              </>
+            ) : (
+              <>
+                <Text style={styles.adminAttendanceHelper}>
+                  {user?.department || 'Your department'} · {prettyAdminDailyDate}
+                  {adminDailyDate && adminDailyDate !== resortTodayKey
+                    ? ` (resort today: ${prettyDateKey(resortTodayKey)})`
+                    : ''}
+                </Text>
+                {teamAttendanceError ? <Text style={styles.attendanceError}>{teamAttendanceError}</Text> : null}
+                {teamAttendanceLoading ? <Text style={styles.emptyText}>Loading team attendance...</Text> : null}
+                {!teamAttendanceLoading && teamAttendance.length === 0 ? (
+                  <Text style={styles.emptyText}>No attendance marked for {prettyAdminDailyDate}.</Text>
+                ) : null}
+                {teamAttendance.map((row) => {
+                  const status = getTeamAttendanceStatus(row);
+                  const statusStyle =
+                    status.tone === 'done'
+                      ? styles.adminDailyStatusDone
+                      : status.tone === 'in'
+                      ? styles.adminDailyStatusOpen
+                      : styles.adminAttendanceStatusPending;
+                  const statusTextStyle =
+                    status.tone === 'done'
+                      ? styles.adminDailyStatusDoneText
+                      : status.tone === 'in'
+                      ? styles.adminDailyStatusOpenText
+                      : styles.adminAttendanceStatusPendingText;
 
-                  <View style={[styles.adminDailyStatusPill, item.status === 'completed' ? styles.adminDailyStatusDone : styles.adminDailyStatusOpen]}>
-                    <Text style={[styles.adminDailyStatusPillText, item.status === 'completed' ? styles.adminDailyStatusDoneText : styles.adminDailyStatusOpenText]}>
-                      {item.status === 'completed' ? 'Completed' : 'Started'}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            ))}
+                  return (
+                    <View key={row._id} style={styles.adminDailyCard}>
+                      <View style={styles.adminDailyRow}>
+                        <View style={styles.adminAttendanceAvatar}>
+                          <Text style={styles.adminAttendanceAvatarText}>{getInitials(row.user?.name || 'U')}</Text>
+                        </View>
+                        <View style={styles.adminDailyInfo}>
+                          <Text style={styles.adminDailyTitle}>{row.user?.name || 'Unknown'}</Text>
+                          <Text style={styles.adminDailyMeta}>Phone: {row.user?.phone || '-'}</Text>
+                          <Text style={styles.adminDailyMeta}>Date: {row.dateKey}</Text>
+                          <Text style={styles.adminDailyMeta}>Check-in: {row.checkIn?.capturedAtLabel || '-'}</Text>
+                          <Text style={styles.adminDailyMeta}>Check-out: {row.checkOut?.capturedAtLabel || '-'}</Text>
+                        </View>
+                        <View style={[styles.adminDailyStatusPill, statusStyle]}>
+                          <Text style={[styles.adminDailyStatusPillText, statusTextStyle]}>{status.label}</Text>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })}
+              </>
+            )}
           </View>
         ) : null}
 
@@ -1117,6 +1218,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
   },
+  adminTabRowCompact: {
+    gap: 6,
+  },
   adminTabBtn: {
     flex: 1,
     minHeight: 42,
@@ -1133,9 +1237,35 @@ const styles = StyleSheet.create({
     backgroundColor: '#E7ECE1',
   },
   adminTabText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: '#475569',
+    textAlign: 'center',
+  },
+  adminAttendanceHelper: {
+    marginBottom: 8,
+    fontSize: 12,
+    lineHeight: 16,
+    color: '#64748B',
+  },
+  adminAttendanceAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 999,
+    backgroundColor: '#E7ECE1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  adminAttendanceAvatarText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#1D391D',
+  },
+  adminAttendanceStatusPending: {
+    backgroundColor: '#FEE2E2',
+  },
+  adminAttendanceStatusPendingText: {
+    color: '#B91C1C',
   },
   adminTabTextActive: {
     color: '#1D391D',
@@ -1288,52 +1418,52 @@ const styles = StyleSheet.create({
     backgroundColor: '#E5E7EB',
   },
   attendanceInlineWrap: {
-    alignItems: 'flex-end',
-    gap: 5,
-  },
-  swipeTrack: {
-    width: 188,
-    height: 46,
-    borderRadius: 999,
-    backgroundColor: '#E8EDF4',
-    borderWidth: 1,
-    borderColor: '#D8DFD1',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  swipeThumb: {
-    position: 'absolute',
-    left: 3,
-    top: 3,
-    width: 91,
-    height: 40,
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 2,
-  },
-  swipeSegmentRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 46,
+    gap: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    backgroundColor: '#FFFFFF',
   },
-  swipeSegment: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+  attendanceInlineWrapOff: {
+    borderColor: '#D8DFD1',
   },
-  swipeSegmentText: {
+  attendanceInlineWrapOn: {
+    borderColor: '#86EFAC',
+    backgroundColor: '#F0FDF4',
+  },
+  attendanceInlineWrapLoading: {
+    opacity: 0.7,
+  },
+  attendanceInlineDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 999,
+  },
+  attendanceInlineDotOff: {
+    backgroundColor: '#94A3B8',
+  },
+  attendanceInlineDotOn: {
+    backgroundColor: '#16A34A',
+  },
+  attendanceInlineLabel: {
     fontSize: 12,
-    fontWeight: '700',
-    color: '#334155',
+    fontWeight: '800',
+    minWidth: 20,
   },
-  attendanceStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  attendanceStatusDot: { width: 7, height: 7, borderRadius: 999 },
-  attendanceStatusDotPending: { backgroundColor: '#DC2626' },
-  attendanceStatusDotIn: { backgroundColor: '#D97706' },
-  attendanceStatusDotDone: { backgroundColor: '#16A34A' },
-  attendanceInlineStatus: { fontSize: 11, fontWeight: '700', color: '#334155' },
-  attendanceError: { marginTop: 6, color: '#B91C1C', fontSize: 12, fontWeight: '600' },
+  attendanceInlineLabelOff: {
+    color: '#64748B',
+  },
+  attendanceInlineLabelOn: {
+    color: '#15803D',
+  },
+  attendanceSwitch: {
+    transform: [{ scaleX: 0.78 }, { scaleY: 0.78 }],
+    marginRight: -4,
+  },
+  attendanceError: { marginTop: 4, color: '#B91C1C', fontSize: 11, fontWeight: '600' },
   ticketImage: {
     marginTop: 10,
     width: '100%',
