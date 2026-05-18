@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Image, Modal, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { VoicePlaybackButton } from '@/components/voice-playback-button';
 import { BrandColors } from '@/constants/brand';
 import { useAuth } from '@/context/auth-context';
 import { useTickets } from '@/context/ticket-context';
@@ -41,6 +42,7 @@ type AdminDailyTaskItem = {
   startTime: string;
   endTime?: string | null;
   startImageUrl?: string | null;
+  startVoiceUrl?: string | null;
   endImageUrl?: string | null;
   employee?: { name?: string | null } | null;
 };
@@ -609,6 +611,7 @@ export default function HomeScreen() {
                         <Text style={styles.adminDailyMeta}>Employee: {item.employee?.name || '-'}</Text>
                         <Text style={styles.adminDailyMeta}>Start: {new Date(item.startTime).toLocaleString()}</Text>
                         <Text style={styles.adminDailyMeta}>End: {item.endTime ? new Date(item.endTime).toLocaleString() : '-'}</Text>
+                        {item.startVoiceUrl ? <VoicePlaybackButton uri={item.startVoiceUrl} label="Voice note" /> : null}
                       </View>
 
                       <View style={[styles.adminDailyStatusPill, item.status === 'completed' ? styles.adminDailyStatusDone : styles.adminDailyStatusOpen]}>

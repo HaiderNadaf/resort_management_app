@@ -21,7 +21,8 @@
       "infoPlist": {
         "UIBackgroundModes": ["location"],
         "NSLocationWhenInUseUsageDescription": "Gold Coins Ops uses your location for check-in and shift tracking.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Gold Coins Ops tracks your location during your shift so admins can see where you are on property."
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Gold Coins Ops tracks your location during your shift so admins can see where you are on property.",
+        "NSMicrophoneUsageDescription": "Gold Coins Ops records voice notes when you log daily tasks."
       }
     },
     "android": {
@@ -34,7 +35,8 @@
         "ACCESS_BACKGROUND_LOCATION",
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_LOCATION",
-        "WAKE_LOCK"
+        "WAKE_LOCK",
+        "RECORD_AUDIO"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#000000",
@@ -56,6 +58,12 @@
           "locationAlwaysAndWhenInUsePermission": "Gold Coins Ops tracks your location during your shift so admins can see where you are on property.",
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Gold Coins Ops records voice notes for your daily tasks."
         }
       ],
       [

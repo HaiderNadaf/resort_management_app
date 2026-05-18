@@ -1,7 +1,10 @@
+import { Audio } from 'expo-av';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import { Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+import { VoicePlaybackButton } from '@/components/voice-playback-button';
 import { useAuth } from '@/context/auth-context';
 import { apiRequest } from '@/lib/api';
 import { prettyDateKey, shiftDateKey, todayDateKey } from '@/lib/date-key';
@@ -13,6 +16,7 @@ type DailyTask = {
   startTime: string;
   endTime?: string | null;
   startImageUrl: string;
+  startVoiceUrl?: string | null;
   endImageUrl?: string | null;
   employee?: {
     _id?: string;
@@ -25,9 +29,13 @@ export default function DailyTaskScreen() {
   const { token, user } = useAuth();
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView | null>(null);
+  const recordingRef = useRef<Audio.Recording | null>(null);
 
   const [taskTitle, setTaskTitle] = useState('');
   const [startImageUri, setStartImageUri] = useState('');
+  const [voiceUri, setVoiceUri] = useState('');
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [showCameraFor, setShowCameraFor] = useState<'start' | null>(null);
   const [tasks, setTasks] = useState<DailyTask[]>([]);
   const [activeTaskId, setActiveTaskId] = useState('');
@@ -39,6 +47,12 @@ export default function DailyTaskScreen() {
   const [selectedDate, setSelectedDate] = useState(resortTodayKey);
   const isToday = selectedDate === resortTodayKey;
   const isNextDisabled = selectedDate >= resortTodayKey;
+
+  useEffect(() => {
+    if (!isRecording) return;
+    const timer = setInterval(() => setRecordingSeconds((s) => s + 1), 1000);
+    return () => clearInterval(timer);
+  }, [isRecording]);
 
   const loadTasks = async (dateKey: string) => {
     if (!token) return;
@@ -103,10 +117,54 @@ export default function DailyTaskScreen() {
     }
   };
 
+  const startVoiceRecording = async () => {
+    try {
+      const permission = await Audio.requestPermissionsAsync();
+      if (!permission.granted) {
+        setError('Microphone permission is required to record voice.');
+        return;
+      }
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+      const recording = new Audio.Recording();
+      await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      await recording.startAsync();
+      recordingRef.current = recording;
+      setVoiceUri('');
+      setRecordingSeconds(0);
+      setIsRecording(true);
+      setError('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to start recording');
+    }
+  };
+
+  const stopVoiceRecording = async () => {
+    try {
+      const recording = recordingRef.current;
+      if (!recording) return;
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      recordingRef.current = null;
+      setIsRecording(false);
+      if (uri) setVoiceUri(uri);
+    } catch (e) {
+      setIsRecording(false);
+      setError(e instanceof Error ? e.message : 'Failed to stop recording');
+    }
+  };
+
+  const clearVoiceRecording = () => {
+    setVoiceUri('');
+    setRecordingSeconds(0);
+  };
+
   const startTask = async () => {
     if (!token) return;
-    if (!taskTitle.trim()) {
-      setError('Task title is required.');
+    if (!taskTitle.trim() && !voiceUri) {
+      setError('Enter a task title or record a voice note.');
       return;
     }
     if (!startImageUri) {
@@ -118,12 +176,19 @@ export default function DailyTaskScreen() {
     setError('');
     try {
       const formData = new FormData();
-      formData.append('taskTitle', taskTitle.trim());
+      if (taskTitle.trim()) formData.append('taskTitle', taskTitle.trim());
       formData.append('startImage', {
         uri: startImageUri,
         type: 'image/jpeg',
         name: `daily-task-start-${Date.now()}.jpg`,
       } as unknown as Blob);
+      if (voiceUri) {
+        formData.append('startVoice', {
+          uri: voiceUri,
+          type: 'audio/m4a',
+          name: `daily-task-voice-${Date.now()}.m4a`,
+        } as unknown as Blob);
+      }
       await apiRequest('/api/daily-tasks/start', {
         method: 'POST',
         body: formData,
@@ -132,6 +197,8 @@ export default function DailyTaskScreen() {
       });
       setTaskTitle('');
       setStartImageUri('');
+      setVoiceUri('');
+      setRecordingSeconds(0);
       await loadTasks(selectedDate);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to start task');
@@ -207,8 +274,41 @@ export default function DailyTaskScreen() {
 
         {!isDepartmentAdmin && isToday && !activeTask ? (
           <>
-            <Text style={styles.label}>Task Title</Text>
-            <TextInput value={taskTitle} onChangeText={setTaskTitle} style={styles.input} placeholder="Task title" />
+            <Text style={styles.label}>Task Title (optional if you record voice)</Text>
+            <TextInput
+              value={taskTitle}
+              onChangeText={setTaskTitle}
+              style={styles.input}
+              placeholder="Type task title"
+            />
+
+            <Text style={styles.label}>Voice note</Text>
+            <Text style={styles.voiceHint}>Tap record and describe the task in your own words.</Text>
+            <View style={styles.voiceRow}>
+              {!isRecording ? (
+                <TouchableOpacity
+                  style={[styles.voiceRecordBtn, voiceUri ? styles.voiceRecordBtnSecondary : null]}
+                  onPress={startVoiceRecording}
+                  disabled={loading}>
+                  <Ionicons name="mic" size={20} color="#FFFFFF" />
+                  <Text style={styles.voiceRecordText}>{voiceUri ? 'Re-record' : 'Record'}</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity style={styles.voiceStopBtn} onPress={stopVoiceRecording}>
+                  <Ionicons name="stop" size={20} color="#FFFFFF" />
+                  <Text style={styles.voiceRecordText}>Stop ({recordingSeconds}s)</Text>
+                </TouchableOpacity>
+              )}
+              {voiceUri && !isRecording ? (
+                <>
+                  <VoicePlaybackButton uri={voiceUri} label="Preview" />
+                  <TouchableOpacity style={styles.voiceClearBtn} onPress={clearVoiceRecording}>
+                    <Text style={styles.voiceClearText}>Clear</Text>
+                  </TouchableOpacity>
+                </>
+              ) : null}
+            </View>
+            {voiceUri ? <Text style={styles.voiceSaved}>Voice note ready</Text> : null}
 
             <Text style={styles.label}>Start Image</Text>
             <TouchableOpacity style={styles.uploadButton} onPress={openCamera}>
@@ -216,7 +316,7 @@ export default function DailyTaskScreen() {
             </TouchableOpacity>
             {startImageUri ? <Image source={{ uri: startImageUri }} style={styles.preview} /> : null}
 
-            <TouchableOpacity style={styles.submitButton} onPress={startTask} disabled={loading}>
+            <TouchableOpacity style={styles.submitButton} onPress={startTask} disabled={loading || isRecording}>
               <Text style={styles.submitText}>{loading ? 'Starting...' : 'Start Task'}</Text>
             </TouchableOpacity>
           </>
@@ -225,6 +325,7 @@ export default function DailyTaskScreen() {
             <View style={styles.card}>
               <Text style={styles.cardTitle}>{activeTask.taskTitle}</Text>
               <Text style={styles.cardSub}>Start: {new Date(activeTask.startTime).toLocaleString()}</Text>
+              {activeTask.startVoiceUrl ? <VoicePlaybackButton uri={activeTask.startVoiceUrl} /> : null}
               <Image source={{ uri: activeTask.startImageUrl }} style={styles.preview} />
             </View>
 
@@ -237,7 +338,9 @@ export default function DailyTaskScreen() {
         {isDepartmentAdmin ? (
           <Text style={styles.helper}>Showing activity for your department users on {prettyDateKey(selectedDate)}.</Text>
         ) : !isToday ? (
-          <Text style={styles.helper}>Viewing history for {prettyDateKey(selectedDate)}. Switch back to Today to start a new task.</Text>
+          <Text style={styles.helper}>
+            Viewing history for {prettyDateKey(selectedDate)}. Switch back to Today to start a new task.
+          </Text>
         ) : null}
 
         <Text style={styles.listTitle}>{isToday ? 'Today Activity' : 'Activity'}</Text>
@@ -247,6 +350,7 @@ export default function DailyTaskScreen() {
               {task.taskTitle} ({task.status === 'completed' ? 'Completed' : 'Started'})
             </Text>
             {isDepartmentAdmin ? <Text style={styles.listText}>Employee: {task.employee?.name || '-'}</Text> : null}
+            {task.startVoiceUrl ? <VoicePlaybackButton uri={task.startVoiceUrl} /> : null}
             <Text style={styles.listText}>Start: {new Date(task.startTime).toLocaleString()}</Text>
             <Text style={styles.listText}>End: {task.endTime ? new Date(task.endTime).toLocaleString() : '-'}</Text>
           </View>
@@ -282,6 +386,39 @@ const styles = StyleSheet.create({
   todayBtn: { marginTop: 8, alignSelf: 'center' },
   todayText: { color: '#2563EB', fontSize: 13, fontWeight: '700' },
   label: { marginTop: 12, marginBottom: 6, fontSize: 13, fontWeight: '700', color: '#243047' },
+  voiceHint: { marginBottom: 8, fontSize: 12, color: '#6B7280' },
+  voiceRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+  voiceRecordBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: '#DC2626',
+  },
+  voiceRecordBtnSecondary: { backgroundColor: '#B45309' },
+  voiceStopBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: '#1D391D',
+  },
+  voiceRecordText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
+  voiceClearBtn: {
+    minHeight: 44,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#D8DFD1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  voiceClearText: { color: '#6B7280', fontWeight: '700', fontSize: 13 },
+  voiceSaved: { marginTop: 6, fontSize: 12, color: '#15803D', fontWeight: '600' },
   input: {
     minHeight: 46,
     borderRadius: 12,
