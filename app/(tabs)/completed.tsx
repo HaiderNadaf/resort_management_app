@@ -1,10 +1,24 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useState } from 'react';
+import { Image, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { BrandColors } from '@/constants/brand';
 import { useTickets } from '@/context/ticket-context';
 
 export default function CompletedScreen() {
+  const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+  const [previewImageLabel, setPreviewImageLabel] = useState<'Before' | 'After' | null>(null);
+
+  const openPreview = (uri: string, label: 'Before' | 'After') => {
+    setPreviewImageUri(uri);
+    setPreviewImageLabel(label);
+  };
+
+  const closePreview = () => {
+    setPreviewImageUri(null);
+    setPreviewImageLabel(null);
+  };
+
   const {
     completedTickets,
     isLoadingCompleted,
@@ -54,12 +68,18 @@ export default function CompletedScreen() {
             <View style={styles.imageRow}>
               <View style={styles.imageCol}>
                 <Text style={styles.imageLabel}>Before</Text>
-                <Image source={{ uri: ticket.imageUrl }} style={styles.ticketImage} />
+                <TouchableOpacity activeOpacity={0.85} onPress={() => openPreview(ticket.imageUrl, 'Before')}>
+                  <Image source={{ uri: ticket.imageUrl }} style={styles.ticketImage} />
+                </TouchableOpacity>
               </View>
               <View style={styles.imageCol}>
                 <Text style={styles.imageLabel}>After</Text>
                 {ticket.completionImageUrl ? (
-                  <Image source={{ uri: ticket.completionImageUrl }} style={styles.ticketImage} />
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => openPreview(ticket.completionImageUrl!, 'After')}>
+                    <Image source={{ uri: ticket.completionImageUrl }} style={styles.ticketImage} />
+                  </TouchableOpacity>
                 ) : (
                   <View style={styles.placeholderImage}>
                     <Text style={styles.placeholderText}>No image</Text>
@@ -114,6 +134,21 @@ export default function CompletedScreen() {
           </View>
         ) : null}
       </ScrollView>
+
+      <Modal visible={Boolean(previewImageUri)} transparent animationType="fade" onRequestClose={closePreview}>
+        <View style={styles.previewOverlay}>
+          <TouchableOpacity style={styles.previewBackdrop} onPress={closePreview} />
+          <View style={styles.previewCard}>
+            <TouchableOpacity style={styles.previewClose} onPress={closePreview}>
+              <Ionicons name="close" size={18} color="#0F172A" />
+            </TouchableOpacity>
+            {previewImageLabel ? <Text style={styles.previewLabel}>{previewImageLabel} image</Text> : null}
+            {previewImageUri ? (
+              <Image source={{ uri: previewImageUri }} style={styles.previewLargeImage} resizeMode="contain" />
+            ) : null}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -356,5 +391,44 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontSize: 12,
     fontWeight: '600',
+  },
+  previewOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(2,6,23,0.65)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+  },
+  previewBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  previewCard: {
+    width: '100%',
+    maxWidth: 420,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    padding: 12,
+  },
+  previewClose: {
+    alignSelf: 'flex-end',
+    width: 30,
+    height: 30,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E2E8F0',
+    marginBottom: 8,
+  },
+  previewLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 8,
+  },
+  previewLargeImage: {
+    width: '100%',
+    height: 360,
+    borderRadius: 12,
+    backgroundColor: '#E5E7EB',
   },
 });
