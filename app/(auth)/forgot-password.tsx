@@ -1,56 +1,74 @@
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
-import { Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BrandColors } from '@/constants/brand';
-import { useAuth } from '@/context/auth-context';
+import { apiRequest } from '@/lib/api';
 
 type UserRole = 'admin' | 'employee';
 
-export default function SignInScreen() {
+export default function ForgotPasswordScreen() {
   const router = useRouter();
-  const { signIn } = useAuth();
 
   const [phone, setPhone] = useState('');
-  const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [role, setRole] = useState<UserRole>('admin');
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const submit = async () => {
-    if (!phone.trim() || !password.trim()) {
-      setError('Please enter phone number and password.');
+    const trimmedPhone = phone.trim();
+    const trimmedPassword = newPassword.trim();
+
+    if (!trimmedPhone || !trimmedPassword || !confirmPassword.trim()) {
+      setError('Please fill in phone, new password, and confirm password.');
+      setSuccess('');
+      return;
+    }
+    if (trimmedPassword.length < 6) {
+      setError('Password must be at least 6 characters.');
+      setSuccess('');
+      return;
+    }
+    if (trimmedPassword !== confirmPassword.trim()) {
+      setError('Passwords do not match.');
+      setSuccess('');
       return;
     }
 
     setError('');
+    setSuccess('');
+
     try {
       setIsSubmitting(true);
-      await signIn({
-        phone: phone.trim(),
-        role,
-        password: password.trim(),
+      await apiRequest<{ message: string }>('/api/auth/forgot-password', {
+        method: 'POST',
+        body: {
+          phone: trimmedPhone,
+          role,
+          newPassword: trimmedPassword,
+        },
       });
-      router.replace('/(tabs)');
+      setSuccess('Password updated. You can sign in now.');
+      setTimeout(() => router.replace('/(auth)/sign-in'), 1500);
     } catch (e) {
-      const message = e instanceof Error ? e.message : 'Sign in failed';
-      if (
-        message.toLowerCase().includes('user not found') ||
-        message.toLowerCase().includes('not authorized') ||
-        message.toLowerCase().includes('invalid password') ||
-        message.toLowerCase().includes('invalid role')
-      ) {
-        if (message.toLowerCase().includes('user not found') || message.toLowerCase().includes('not authorized')) {
-          router.replace('/(auth)/sign-up');
-          return;
-        }
-        setError('User not exist');
-        return;
-      }
-      setError('User not exist');
+      const message = e instanceof Error ? e.message : 'Failed to reset password';
+      setError(message);
     } finally {
       setIsSubmitting(false);
     }
@@ -64,19 +82,22 @@ export default function SignInScreen() {
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={22} color={BrandColors.text} />
+            <Text style={styles.backText}>Back to sign in</Text>
+          </TouchableOpacity>
+
           <View style={styles.hero}>
             <View style={styles.logoRing}>
               <Image source={require('@/assets/images/logo.png')} style={styles.logo} accessibilityIgnoresInvertColors />
             </View>
-            <Text style={styles.logoTag}>Since 1994</Text>
-            <Text style={styles.title}>Welcome back</Text>
-            <Text style={styles.subtitle}>Sign in to manage tickets and attendance.</Text>
+            <Text style={styles.title}>Reset password</Text>
+            <Text style={styles.subtitle}>
+              Enter your phone and role. If an account exists, you can set a new password.
+            </Text>
           </View>
 
           <View style={styles.formCard}>
-            <Text style={styles.formTitle}>Account</Text>
-            <Text style={styles.formSubtitle}>Phone, password, and role.</Text>
-
             <Text style={styles.label}>Phone Number</Text>
             <TextInput
               value={phone}
@@ -86,21 +107,6 @@ export default function SignInScreen() {
               keyboardType="phone-pad"
               placeholderTextColor={BrandColors.muted}
             />
-
-            <Text style={styles.label}>Password</Text>
-            <View style={styles.passwordWrap}>
-              <TextInput
-                value={password}
-                onChangeText={setPassword}
-                placeholder="Enter password"
-                style={styles.passwordInput}
-                secureTextEntry={!showPassword}
-                placeholderTextColor={BrandColors.muted}
-              />
-              <TouchableOpacity style={styles.eyeButton} onPress={() => setShowPassword((prev) => !prev)}>
-                <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color={BrandColors.muted} />
-              </TouchableOpacity>
-            </View>
 
             <Text style={styles.label}>Role</Text>
             <View style={styles.segmentRow}>
@@ -112,31 +118,46 @@ export default function SignInScreen() {
               <TouchableOpacity
                 style={[styles.segmentButton, role === 'employee' ? styles.segmentActive : null]}
                 onPress={() => setRole('employee')}>
-                <Text style={[styles.segmentText, role === 'employee' ? styles.segmentTextActive : null]}>Employee</Text>
+                <Text style={[styles.segmentText, role === 'employee' ? styles.segmentTextActive : null]}>
+                  Employee
+                </Text>
               </TouchableOpacity>
             </View>
 
+            <Text style={styles.label}>New Password</Text>
+            <View style={styles.passwordWrap}>
+              <TextInput
+                value={newPassword}
+                onChangeText={setNewPassword}
+                placeholder="At least 6 characters"
+                style={styles.passwordInput}
+                secureTextEntry={!showPassword}
+                placeholderTextColor={BrandColors.muted}
+              />
+              <TouchableOpacity style={styles.eyeButton} onPress={() => setShowPassword((prev) => !prev)}>
+                <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color={BrandColors.muted} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.label}>Confirm Password</Text>
+            <TextInput
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              placeholder="Re-enter new password"
+              style={styles.input}
+              secureTextEntry={!showPassword}
+              placeholderTextColor={BrandColors.muted}
+            />
+
             {error ? <Text style={styles.error}>{error}</Text> : null}
+            {success ? <Text style={styles.success}>{success}</Text> : null}
 
             <TouchableOpacity
               style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]}
               onPress={submit}
               disabled={isSubmitting}
               activeOpacity={0.85}>
-              <Text style={styles.submitButtonText}>{isSubmitting ? 'Signing in…' : 'Continue'}</Text>
-              {!isSubmitting ? <Ionicons name="arrow-forward" size={20} color="#FFFFFF" style={styles.submitIcon} /> : null}
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={() => router.push('/(auth)/forgot-password')}>
-              <Text style={styles.footerText}>
-                Forgot password? <Text style={styles.footerLink}>Reset it</Text>
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={() => router.push('/(auth)/sign-up')}>
-              <Text style={styles.footerText}>
-                New user? <Text style={styles.footerLink}>Create account</Text>
-              </Text>
+              <Text style={styles.submitButtonText}>{isSubmitting ? 'Updating…' : 'Update password'}</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -149,6 +170,8 @@ const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: BrandColors.appBg },
   keyboardWrap: { flex: 1 },
   container: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 40 },
+  backButton: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
+  backText: { fontSize: 15, fontWeight: '600', color: BrandColors.text },
   hero: { alignItems: 'center', marginBottom: 22 },
   logoRing: {
     padding: 10,
@@ -156,27 +179,14 @@ const styles = StyleSheet.create({
     backgroundColor: BrandColors.cardBg,
     borderWidth: 1,
     borderColor: BrandColors.border,
-    shadowColor: '#111827',
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
   },
-  logo: { width: 80, height: 80, borderRadius: 16 },
-  logoTag: {
-    marginTop: 12,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 1.2,
-    color: BrandColors.mustard,
-    textTransform: 'uppercase',
-  },
-  title: { marginTop: 18, textAlign: 'center', fontSize: 28, fontWeight: '800', color: BrandColors.text },
+  logo: { width: 64, height: 64, borderRadius: 14 },
+  title: { marginTop: 16, textAlign: 'center', fontSize: 26, fontWeight: '800', color: BrandColors.text },
   subtitle: {
     marginTop: 8,
     textAlign: 'center',
-    fontSize: 15,
-    lineHeight: 22,
+    fontSize: 14,
+    lineHeight: 20,
     color: BrandColors.muted,
     paddingHorizontal: 8,
   },
@@ -187,14 +197,7 @@ const styles = StyleSheet.create({
     borderColor: BrandColors.border,
     paddingHorizontal: 18,
     paddingVertical: 20,
-    shadowColor: '#111827',
-    shadowOpacity: 0.06,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 2,
   },
-  formTitle: { fontSize: 18, fontWeight: '800', color: BrandColors.text },
-  formSubtitle: { marginTop: 4, fontSize: 14, color: BrandColors.muted, marginBottom: 4 },
   label: { fontSize: 13, fontWeight: '700', color: BrandColors.text, marginBottom: 6, marginTop: 12 },
   input: {
     minHeight: 50,
@@ -244,19 +247,15 @@ const styles = StyleSheet.create({
   segmentText: { color: BrandColors.text, fontWeight: '600', fontSize: 15 },
   segmentTextActive: { color: BrandColors.primary },
   error: { marginTop: 12, color: BrandColors.danger, fontSize: 13, fontWeight: '600' },
+  success: { marginTop: 12, color: BrandColors.primary, fontSize: 13, fontWeight: '600' },
   submitButton: {
     marginTop: 18,
     backgroundColor: BrandColors.primary,
     borderRadius: 14,
     minHeight: 52,
-    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
   },
   submitButtonDisabled: { opacity: 0.65 },
   submitButtonText: { color: '#FFFFFF', fontSize: 17, fontWeight: '700' },
-  submitIcon: { marginLeft: 2 },
-  footerText: { marginTop: 16, textAlign: 'center', color: BrandColors.muted, fontSize: 14 },
-  footerLink: { color: BrandColors.primary, fontWeight: '700' },
 });
