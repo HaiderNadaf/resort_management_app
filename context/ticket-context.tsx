@@ -59,12 +59,16 @@ type TicketsPageResponse = {
   tickets: Ticket[];
 };
 
+export type TicketStatusFilter = 'open' | 'all' | 'pending' | 'in_progress';
+
 type TicketContextValue = {
   /** Open (non-completed) tickets for the current home page. */
   tickets: Ticket[];
   /** Completed tickets for the current completed tab page. */
   completedTickets: Ticket[];
   ticketSummary: TicketSummary | null;
+  ticketStatusFilter: TicketStatusFilter;
+  setTicketStatusFilter: (filter: TicketStatusFilter) => void;
   isLoading: boolean;
   isLoadingCompleted: boolean;
   openPage: number;
@@ -107,6 +111,7 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
   const [assignedOpenTicketIds, setAssignedOpenTicketIds] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingCompleted, setIsLoadingCompleted] = useState(false);
+  const [ticketStatusFilter, setTicketStatusFilterState] = useState<TicketStatusFilter>('open');
   const [openPage, setOpenPageState] = useState(1);
   const [openTotalPages, setOpenTotalPages] = useState(1);
   const [openTotalCount, setOpenTotalCount] = useState(0);
@@ -145,7 +150,7 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
   }, [token, user?.role, updateAssignedNotificationCount]);
 
   const fetchOpenPage = useCallback(
-    async (page: number) => {
+    async (page: number, statusFilter: TicketStatusFilter = ticketStatusFilter) => {
       if (!token) {
         setTickets([]);
         setOpenTotalPages(1);
@@ -156,15 +161,26 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       const p = Math.max(1, page);
-      const base = `page=${p}&limit=${TICKETS_PAGE_SIZE}&openOnly=true`;
-      const emp = user?.role === 'employee' ? `&${employeeListQuery()}` : '';
-      const response = await apiRequest<TicketsPageResponse>(`/api/tickets?${base}${emp}`, { token });
+      const params = new URLSearchParams({
+        page: String(p),
+        limit: String(TICKETS_PAGE_SIZE),
+      });
+      if (statusFilter === 'open') {
+        params.set('openOnly', 'true');
+      } else if (statusFilter === 'all') {
+        // no status — all tickets in scope (pending, in progress, completed)
+      } else {
+        params.set('status', statusFilter);
+      }
+      const emp = user?.role === 'employee' ? employeeListQuery() : '';
+      if (emp) params.set('assignedToMe', 'true');
+      const response = await apiRequest<TicketsPageResponse>(`/api/tickets?${params.toString()}`, { token });
       setTickets(response.tickets);
       setOpenTotalPages(response.totalPages);
       setOpenTotalCount(response.totalCount);
       setOpenPageState(response.page);
     },
-    [token, user?.id, user?.role]
+    [token, user?.id, user?.role, ticketStatusFilter]
   );
 
   const fetchCompletedPage = useCallback(
@@ -221,12 +237,29 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
     }
   }, [token, user?.id, user?.role, signOut, fetchSummary, fetchOpenPage, fetchCompletedPage]);
 
+  const setTicketStatusFilter = useCallback(
+    (filter: TicketStatusFilter) => {
+      setTicketStatusFilterState(filter);
+      setOpenPageState(1);
+      setIsLoading(true);
+      fetchOpenPage(1, filter)
+        .catch(async (error) => {
+          const message = error instanceof Error ? error.message : 'Request failed';
+          if (/not authorized|user not found/i.test(message)) {
+            await signOut();
+          }
+        })
+        .finally(() => setIsLoading(false));
+    },
+    [fetchOpenPage, signOut]
+  );
+
   const setOpenPageSafe = useCallback(
     async (page: number) => {
       if (!token) return;
       setIsLoading(true);
       try {
-        await fetchOpenPage(page);
+        await fetchOpenPage(page, ticketStatusFilter);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Request failed';
         if (/not authorized|user not found/i.test(message)) {
@@ -238,7 +271,7 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
         setIsLoading(false);
       }
     },
-    [token, signOut, fetchOpenPage]
+    [token, signOut, fetchOpenPage, ticketStatusFilter]
   );
 
   const setCompletedPageSafe = useCallback(
@@ -352,6 +385,7 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
       setAssignedNotificationCount(0);
       setOpenPageState(1);
       setCompletedPageState(1);
+      setTicketStatusFilterState('open');
     }
   }, [isAuthenticated, token, user?.id, refreshTickets]);
 
@@ -370,6 +404,8 @@ export function TicketProvider({ children }: { children: React.ReactNode }) {
     tickets,
     completedTickets,
     ticketSummary,
+    ticketStatusFilter,
+    setTicketStatusFilter,
     isLoading,
     isLoadingCompleted,
     openPage,

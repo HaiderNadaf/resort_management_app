@@ -10,7 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { VoicePlaybackButton } from '@/components/voice-playback-button';
 import { BrandColors } from '@/constants/brand';
 import { useAuth } from '@/context/auth-context';
-import { useTickets } from '@/context/ticket-context';
+import { useTickets, type TicketStatusFilter } from '@/context/ticket-context';
 import { apiRequest } from '@/lib/api';
 import { prettyDateKey, shiftDateKey, todayDateKey } from '@/lib/date-key';
 import { resumeShiftTrackingIfNeeded, startShiftTracking, stopShiftTracking } from '@/lib/location-tracking';
@@ -90,6 +90,8 @@ export default function HomeScreen() {
     openTotalPages,
     openTotalCount,
     setOpenPage,
+    ticketStatusFilter,
+    setTicketStatusFilter,
     assignedNotificationCount,
     markAssignedNotificationsRead,
     startTicket,
@@ -142,6 +144,23 @@ export default function HomeScreen() {
   const isAdminDailyNextDisabled = (adminDailyDate || resortTodayKey) >= resortTodayKey;
   const isDepartmentAdmin = user?.role === 'admin' && !user?.isMainAdmin;
   const showTicketList = user?.role !== 'admin' || adminView === 'tickets';
+
+  const applyTicketStatusFilter = useCallback(
+    (filter: TicketStatusFilter) => {
+      if (user?.role === 'admin') {
+        setAdminView('tickets');
+      }
+      setTicketStatusFilter(filter);
+    },
+    [user?.role, setTicketStatusFilter]
+  );
+
+  const ticketListSectionTitle = useMemo(() => {
+    if (ticketStatusFilter === 'all') return 'All tickets';
+    if (ticketStatusFilter === 'pending') return 'Pending tickets';
+    if (ticketStatusFilter === 'in_progress') return 'In progress tickets';
+    return 'Open tickets';
+  }, [ticketStatusFilter]);
 
   const persistPendingAttendanceActions = useCallback(async (items: PendingAttendanceAction[]) => {
     setPendingAttendanceActions(items);
@@ -463,27 +482,36 @@ export default function HomeScreen() {
         {attendanceError ? <Text style={styles.attendanceError}>{attendanceError}</Text> : null}
 
         <View style={styles.statsRow}>
-          <View style={styles.statCard}>
+          <TouchableOpacity
+            style={[styles.statCard, ticketStatusFilter === 'all' ? styles.statCardActive : null]}
+            onPress={() => applyTicketStatusFilter('all')}
+            activeOpacity={0.85}>
             <View style={[styles.iconWrap, { backgroundColor: '#E7ECE1' }]}>
               <Ionicons name="briefcase-outline" size={14} color="#1D391D" />
             </View>
             <Text style={styles.statNumber}>{totalInScope}</Text>
             <Text style={styles.statLabel}>Total</Text>
-          </View>
-          <View style={styles.statCard}>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.statCard, ticketStatusFilter === 'pending' ? styles.statCardActive : null]}
+            onPress={() => applyTicketStatusFilter('pending')}
+            activeOpacity={0.85}>
             <View style={[styles.iconWrap, { backgroundColor: '#F5EBC4' }]}>
               <Ionicons name="time-outline" size={14} color="#CDAB2C" />
             </View>
             <Text style={styles.statNumber}>{pendingCount}</Text>
             <Text style={styles.statLabel}>Pending</Text>
-          </View>
-          <View style={styles.statCard}>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.statCard, ticketStatusFilter === 'in_progress' ? styles.statCardActive : null]}
+            onPress={() => applyTicketStatusFilter('in_progress')}
+            activeOpacity={0.85}>
             <View style={[styles.iconWrap, { backgroundColor: '#E7ECE1' }]}>
               <Ionicons name="sparkles-outline" size={14} color="#3E7BFA" />
             </View>
             <Text style={styles.statNumber}>{activeCount}</Text>
             <Text style={styles.statLabel}>In Progress</Text>
-          </View>
+          </TouchableOpacity>
         </View>
 
         {user?.role === 'admin' ? (
@@ -493,21 +521,21 @@ export default function HomeScreen() {
                 ? 'Department Daily Activity'
                 : adminView === 'attendance'
                 ? 'Team Attendance'
-                : 'Open tickets'}
+                : ticketListSectionTitle}
             </Text>
             <Text style={styles.sectionCount}>
               {adminView === 'daily'
                 ? `${adminDailyTasks.length} records`
                 : adminView === 'attendance'
                 ? `${teamAttendance.length} employees`
-                : `${openTotalCount} open · page ${openPage} of ${openTotalPages}`}
+                : `${openTotalCount} · page ${openPage} of ${openTotalPages}`}
             </Text>
           </View>
         ) : showTicketList ? (
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Open tickets</Text>
+            <Text style={styles.sectionTitle}>{ticketListSectionTitle}</Text>
             <Text style={styles.sectionCount}>
-              {openTotalCount} open · page {openPage} of {openTotalPages}
+              {openTotalCount} · page {openPage} of {openTotalPages}
             </Text>
           </View>
         ) : null}
@@ -986,6 +1014,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingVertical: 14,
     paddingHorizontal: 12,
+  },
+  statCardActive: {
+    borderColor: BrandColors.primary,
+    borderWidth: 2,
+    backgroundColor: BrandColors.primarySoft,
   },
   iconWrap: {
     width: 26,
